@@ -1,0 +1,114 @@
+version: "3.7"
+services:
+  app1:
+    container_name: patient-service
+    image: patient-service
+    build: patient-service
+    depends_on:
+      - postgres
+    networks:
+      - my_network
+    environment:
+      BILLING_SERVICE_ADDRESS: billing-service
+      BILLING_SERVICE_PORT: 9001
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
+  app2:
+    container_name: billing-service
+    image: billing-service
+    build: billing-service
+    ports:
+       - "4002:4002"
+       - "9001:9001"
+    networks:
+       - my_network
+
+  app3:
+      container_name: analytics-service
+      image: analytics-service
+      build: analytics-service
+      ports:
+        - "4003:4003"
+      environment:
+        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      networks:
+        - my_network
+
+  app4:
+     container_name: api-gateway
+     image: api-gateway
+     build: api-gateway
+     depends_on:
+          - app1
+     ports:
+          - "4004:4004"
+     environment:
+       AUTH_SERVICE_URL: http://auth-service:4005
+     networks:
+          - my_network
+
+  app5:
+    container_name: auth-service
+    image: auth-service
+    build: auth-service
+    depends_on:
+      - postgres-auth
+    networks:
+      - my_network
+
+  postgres:
+    container_name: PatientPostgresDB
+    image: "postgres:16"
+    environment:
+      POSTGRES_USER: absi
+      POSTGRES_PASSWORD: 1234
+      POSTGRES_DB: PatientDB
+    ports:
+      - "5000:5432"
+    networks:
+      - my_network
+    volumes:
+      - postgres_patient_data:/var/lib/postgresql/data
+
+  postgres-auth:
+    container_name: AuthServicePostgresDB
+    image: "postgres:16"
+    environment:
+      POSTGRES_USER: absi
+      POSTGRES_PASSWORD: 1234
+      POSTGRES_DB: AuthDB
+    ports:
+      - "5001:5432"
+    networks:
+      - my_network
+    volumes:
+      - postgres_auth_data:/var/lib/postgresql/data
+
+  kafka:
+    container_name: kafka-service
+    image:  apache/kafka:latest
+    ports:
+        - "9092:9092"
+        - "9094:9094"
+    environment:
+      KAFKA_NODE_ID: 0
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - my_network
+
+networks:
+  my_network:
+    driver: bridge
+
+volumes:
+  postgres_patient_data:
+  postgres_auth_data:

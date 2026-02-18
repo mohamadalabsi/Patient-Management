@@ -1,0 +1,13 @@
+### PUT request to update patient information
+PUT http://localhost:4004/api/patients/{id}
+    Content-Type: application/json
+    Authorization: Bearer {{token}}
+
+{
+  "name": "Updated Name",
+  "email": "updated@example.com",
+  "address": "456 New St, Frankfurt, Germany",
+  "birthDate": "1990-01-15"
+}
+
+###

@@ -1,0 +1,4 @@
+GET http://lb-8813ce00.elb.localhost.localstack.cloud:4004/api/patients
+Authorization: Bearer {{token}}
+
+###
