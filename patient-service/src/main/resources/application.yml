@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: patient-service
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/PatientDB}
+    username: ${SPRING_DATASOURCE_USERNAME:admin_user}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+    show-sql: ${SPRING_JPA_SHOW_SQL:true}
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  sql:
+    init:
+      mode: ${SPRING_SQL_INIT_MODE:always}
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
+
+server:
+  port: ${SERVER_PORT:4000}
+
+logging:
+  level:
+    root: ${LOGGING_LEVEL_ROOT:info}

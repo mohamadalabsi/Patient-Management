@@ -1,5 +1,22 @@
+FROM maven:3.9.9-eclipse-temurin-21 AS build
 
-FROM eclipse-temurin:21-jre-alpine AS runner
-ADD target/auth-service-0.0.1-SNAPSHOT.jar auth-service-0.0.1-SNAPSHOT.jar
+WORKDIR /workspace
 
-ENTRYPOINT ["java", "-jar","/auth-service-0.0.1-SNAPSHOT.jar"]
+COPY pom.xml .
+RUN mvn -B dependency:go-offline
+
+COPY src ./src
+RUN mvn -B clean package -DskipTests
+
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+RUN addgroup -S spring && adduser -S spring -G spring
+COPY --from=build --chown=spring:spring /workspace/target/auth-service-0.0.1-SNAPSHOT.jar app.jar
+
+USER spring
+
+EXPOSE 4005
+
+ENTRYPOINT ["java", "-jar", "app.jar"]

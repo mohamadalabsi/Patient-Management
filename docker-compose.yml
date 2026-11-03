@@ -1,95 +1,126 @@
-version: "3.7"
 services:
-  app1:
+  patient-service:
     container_name: patient-service
     image: patient-service
-    build: patient-service
+    build:
+      context: ./patient-service
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
     networks:
-      - my_network
+      - application-network
     environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${PATIENT_DB_NAME:?PATIENT_DB_NAME is required}
+      SPRING_DATASOURCE_USERNAME: ${PATIENT_DB_USER:?PATIENT_DB_USER is required}
+      SPRING_DATASOURCE_PASSWORD: ${PATIENT_DB_PASSWORD:?PATIENT_DB_PASSWORD is required}
       BILLING_SERVICE_ADDRESS: billing-service
       BILLING_SERVICE_PORT: 9001
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
 
-  app2:
+  billing-service:
     container_name: billing-service
     image: billing-service
-    build: billing-service
-    ports:
-       - "4002:4002"
-       - "9001:9001"
+    build:
+      context: ./billing-service
     networks:
-       - my_network
+      - application-network
+    ports:
+      - "4002:4002"
+      - "9001:9001"
 
-  app3:
-      container_name: analytics-service
-      image: analytics-service
-      build: analytics-service
-      ports:
-        - "4003:4003"
-      environment:
-        SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      networks:
-        - my_network
+  analytics-service:
+    container_name: analytics-service
+    image: analytics-service
+    build:
+      context: ./analytics-service
+    depends_on:
+      kafka:
+        condition: service_started
+    networks:
+      - application-network
+    ports:
+      - "4003:4003"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
 
-  app4:
-     container_name: api-gateway
-     image: api-gateway
-     build: api-gateway
-     depends_on:
-          - app1
-     ports:
-          - "4004:4004"
-     environment:
-       AUTH_SERVICE_URL: http://auth-service:4005
-     networks:
-          - my_network
+  api-gateway:
+    container_name: api-gateway
+    image: api-gateway
+    build:
+      context: ./api-gateway
+    depends_on:
+      - patient-service
+      - auth-service
+    networks:
+      - application-network
+    ports:
+      - "4004:4004"
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:4005
+      PATIENT_SERVICE_URL: http://patient-service:4000
 
-  app5:
+  auth-service:
     container_name: auth-service
     image: auth-service
-    build: auth-service
+    build:
+      context: ./auth-service
     depends_on:
-      - postgres-auth
+      postgres-auth:
+        condition: service_healthy
     networks:
-      - my_network
+      - application-network
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auth:5432/${AUTH_DB_NAME:?AUTH_DB_NAME is required}
+      SPRING_DATASOURCE_USERNAME: ${AUTH_DB_USER:?AUTH_DB_USER is required}
+      SPRING_DATASOURCE_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
 
   postgres:
-    container_name: PatientPostgresDB
-    image: "postgres:16"
+    container_name: patient-postgres
+    image: postgres:16
     environment:
-      POSTGRES_USER: absi
-      POSTGRES_PASSWORD: 1234
-      POSTGRES_DB: PatientDB
+      POSTGRES_USER: ${PATIENT_DB_USER:?PATIENT_DB_USER is required}
+      POSTGRES_PASSWORD: ${PATIENT_DB_PASSWORD:?PATIENT_DB_PASSWORD is required}
+      POSTGRES_DB: ${PATIENT_DB_NAME:?PATIENT_DB_NAME is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - application-network
     ports:
       - "5000:5432"
-    networks:
-      - my_network
     volumes:
       - postgres_patient_data:/var/lib/postgresql/data
 
   postgres-auth:
-    container_name: AuthServicePostgresDB
-    image: "postgres:16"
+    container_name: auth-postgres
+    image: postgres:16
     environment:
-      POSTGRES_USER: absi
-      POSTGRES_PASSWORD: 1234
-      POSTGRES_DB: AuthDB
+      POSTGRES_USER: ${AUTH_DB_USER:?AUTH_DB_USER is required}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
+      POSTGRES_DB: ${AUTH_DB_NAME:?AUTH_DB_NAME is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - application-network
     ports:
       - "5001:5432"
-    networks:
-      - my_network
     volumes:
       - postgres_auth_data:/var/lib/postgresql/data
 
   kafka:
     container_name: kafka-service
-    image:  apache/kafka:latest
+    image: apache/kafka:latest
     ports:
-        - "9092:9092"
-        - "9094:9094"
+      - "9092:9092"
+      - "9094:9094"
     environment:
       KAFKA_NODE_ID: 0
       KAFKA_PROCESS_ROLES: controller,broker
@@ -103,10 +134,10 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     networks:
-      - my_network
+      - application-network
 
 networks:
-  my_network:
+  application-network:
     driver: bridge
 
 volumes:

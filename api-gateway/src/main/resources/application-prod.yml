@@ -1,20 +1,19 @@
-
 server:
-  port: 4004
+  port: ${SERVER_PORT:4004}
 
 spring:
   cloud:
     gateway:
       routes:
         - id: auth-service-route
-          uri: http://host.docker.internal:4005
+          uri: ${AUTH_SERVICE_URL}
           predicates:
             - Path=/auth/**
           filters:
             - StripPrefix=1
 
         - id: patient-service-route
-          uri: http://host.docker.internal:4000
+          uri: ${PATIENT_SERVICE_URL}
           predicates:
             - Path=/api/patients/**
           filters:
@@ -22,19 +21,23 @@ spring:
             - JwtValidation
 
         - id: api-docs-patient-route
-          uri: http://host.docker.internal:4000
+          uri: ${PATIENT_SERVICE_URL}
           predicates:
             - Path=/api-docs/patients
           filters:
             - RewritePath=/api-docs/patients,/v3/api-docs
 
-
         - id: api-docs-auth-route
-          uri: http://host.docker.internal:4005
+          uri: ${AUTH_SERVICE_URL}
           predicates:
             - Path=/api-docs/auth
           filters:
             - RewritePath=/api-docs/auth,/v3/api-docs
+
+auth:
+  service:
+    url: ${AUTH_SERVICE_URL}
+
 logging:
   level:
-    org.springframework.cloud.gateway: DEBUG
+    org.springframework.cloud.gateway: ${LOGGING_LEVEL_GATEWAY:info}
