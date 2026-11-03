@@ -421,38 +421,78 @@ Patient-Management-Final/
 └── docker-compose.yml        # Docker Compose configuration
 ```
 
-## 🔐 Environment Variables
+## 🔐 Environment Variables and Configuration
 
-### Patient Service
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `BILLING_SERVICE_ADDRESS` | Billing service hostname | `billing-service` |
-| `BILLING_SERVICE_PORT` | Billing service gRPC port | `9001` |
-| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Kafka broker address | `kafka:9092` |
+Each service keeps its own `application.yml`. These files
+contain service-specific behavior and safe defaults for running a service directly.
+They do not contain passwords or JWT signing keys.
 
-### API Gateway
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AUTH_SERVICE_URL` | Auth service internal URL | `http://auth-service:4005` |
+For local Docker Compose development, create your own root `.env` file. Docker Compose
+reads it for variable substitution and passes only the relevant values to each service.
+Choose your own database names, usernames, passwords, and JWT secret:
 
-### Analytics Service
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Kafka broker address | `kafka:9092` |
+```dotenv
+PATIENT_DB_NAME=your_patient_database
+PATIENT_DB_USER=your_patient_database_user
+PATIENT_DB_PASSWORD=your_patient_database_password
+
+AUTH_DB_NAME=your_auth_database
+AUTH_DB_USER=your_auth_database_user
+AUTH_DB_PASSWORD=your_auth_database_password
+
+JWT_SECRET=your_long_random_jwt_secret
+```
+
+Then start the application:
+
+```bash
+docker compose up --build
+```
+
+`.env` is ignored by Git and must not be committed. The variables required in it are:
+
+| Variable | Used by | Description |
+|----------|---------|-------------|
+| `PATIENT_DB_NAME` | PostgreSQL and patient service | Patient database name |
+| `PATIENT_DB_USER` | PostgreSQL and patient service | Patient database user |
+| `PATIENT_DB_PASSWORD` | PostgreSQL and patient service | Patient database password |
+| `AUTH_DB_NAME` | PostgreSQL and auth service | Auth database name |
+| `AUTH_DB_USER` | PostgreSQL and auth service | Auth database user |
+| `AUTH_DB_PASSWORD` | PostgreSQL and auth service | Auth database password |
+| `JWT_SECRET` | Auth service | JWT signing key |
+
+Compose also supplies non-secret Docker network addresses:
+
+| Variable | Service | Value in Compose |
+|----------|---------|------------------|
+| `BILLING_SERVICE_ADDRESS` | Patient | `billing-service` |
+| `BILLING_SERVICE_PORT` | Patient | `9001` |
+| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Patient, analytics | `kafka:9092` |
+| `AUTH_SERVICE_URL` | API gateway | `http://auth-service:4005` |
+| `PATIENT_SERVICE_URL` | API gateway | `http://patient-service:4000` |
+
+For staging or production, inject these values through the deployment platform
+(for example AWS Secrets Manager/ECS task-definition secrets, Kubernetes Secrets, or
+Vault) instead of committing or distributing a production `.env` file.
 
 ## 🗃️ Database Configuration
 
+Docker Compose creates two PostgreSQL databases using the values you choose in `.env`:
+
 ### Patient Database
-- **Container**: `PatientPostgresDB`
+- **Container**: `patient-postgres`
 - **Port**: `5000` (mapped to internal `5432`)
-- **Database**: `PatientDB`
-- **User**: `absi`
+- **Database, user, and password**: configured with `PATIENT_DB_NAME`, `PATIENT_DB_USER`, and `PATIENT_DB_PASSWORD`
 
 ### Auth Database
-- **Container**: `AuthServicePostgresDB`
+- **Container**: `auth-postgres`
 - **Port**: `5001` (mapped to internal `5432`)
-- **Database**: `AuthDB`
-- **User**: `absi`
+- **Database, user, and password**: configured with `AUTH_DB_NAME`, `AUTH_DB_USER`, and `AUTH_DB_PASSWORD`
+
+The database values are applied when each PostgreSQL data volume is initialized. If you
+change them after the containers have already been started, recreate the volumes with
+`docker compose down -v` before running `docker compose up --build` again. This removes
+the existing local database data.
 
 ## 📝 License
 
@@ -465,4 +505,3 @@ This project is licensed under the MIT License.
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
-
