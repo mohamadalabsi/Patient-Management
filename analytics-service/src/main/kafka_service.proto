@@ -1,18 +1,30 @@
-//it will be similar as other proto files we created as grpc , code will be generated based on
-// this file to use it in the service
-syntax = "proto3";
-package patient.events;
+// ---------------------------------------------------------------------------
+// PHASE 0 (step 0.1): DISABLED — stray copy, kept only as a commented-out record.
+//
+// Why: protobuf-maven-plugin only compiles files under src/main/proto/.
+// This file sits one folder higher (src/main/), so it was NEVER compiled —
+// the real contract is analytics-service/src/main/proto/kafka_service.proto.
+// A second, unused copy is dangerous: someone edits this one, nothing changes,
+// and they don't understand why. In step 0.3 all contracts move to one shared
+// root folder (proto/), so there will be exactly one copy of each.
+// ---------------------------------------------------------------------------
 
-option java_multiple_files=true;
-
-message PatientEvent {
-    string patientId = 1;
-    string name = 2;
-    string email = 3;
-    string event_type = 4;
-//    we can add more fields if needed but these what will send in the service and the consumer
-  //    need
-}
-
-
-//compile it to get the generated code
+// PHASE 0 (old):
+////it will be similar as other proto files we created as grpc , code will be generated based on
+//// this file to use it in the service
+//syntax = "proto3";
+//package patient.events;
+//
+//option java_multiple_files=true;
+//
+//message PatientEvent {
+//    string patientId = 1;
+//    string name = 2;
+//    string email = 3;
+//    string event_type = 4;
+////    we can add more fields if needed but these what will send in the service and the consumer
+//  //    need
+//}
+//
+//
+////compile it to get the generated code
