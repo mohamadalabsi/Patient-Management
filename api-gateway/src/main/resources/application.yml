@@ -1,40 +1,95 @@
 server:
   port: ${SERVER_PORT:4004}
 
+# -----------------------------------------------------------------------------
+# PHASE 0 (step 0.2): route configuration moved to a new property prefix.
+#
+#   old (Gateway 4.x):  spring.cloud.gateway.routes
+#   new (Gateway 5.x):  spring.cloud.gateway.server.webflux.routes
+#
+# Why: Spring Cloud Gateway now ships two server flavours (webflux and webmvc),
+# and each has its own property namespace. We use the reactive "webflux" one
+# (see pom.xml). Gateway 5 no longer reads the old prefix - if we kept it, the
+# gateway would start fine but with ZERO routes, and every request would be 404.
+# The routes themselves are unchanged.
+# -----------------------------------------------------------------------------
+
+# PHASE 0 (old):
+#spring:
+#  application:
+#    name: api-gateway
+#  cloud:
+#    gateway:
+#      routes:
+#        - id: auth-service-route
+#          uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
+#          predicates:
+#            - Path=/auth/**
+#          filters:
+#            - StripPrefix=1
+#
+#        - id: patient-service-route
+#          uri: ${PATIENT_SERVICE_URL:http://patient-service:4000}
+#          predicates:
+#            - Path=/api/patients/**
+#          filters:
+#            - StripPrefix=1
+#            - JwtValidation
+#
+#        - id: api-docs-patient-route
+#          uri: ${PATIENT_SERVICE_URL:http://patient-service:4000}
+#          predicates:
+#            - Path=/api-docs/patients
+#          filters:
+#            - RewritePath=/api-docs/patients,/v3/api-docs
+#
+#        - id: api-docs-auth-route
+#          uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
+#          predicates:
+#            - Path=/api-docs/auth
+#          filters:
+#            - RewritePath=/api-docs/auth,/v3/api-docs
+
 spring:
   application:
     name: api-gateway
   cloud:
     gateway:
-      routes:
-        - id: auth-service-route
-          uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
-          predicates:
-            - Path=/auth/**
-          filters:
-            - StripPrefix=1
+      server:          # PHASE 0 (new): extra level "server.webflux"
+        webflux:
+          routes:
+            # /auth/login -> auth-service /login (StripPrefix=1 removes "/auth")
+            - id: auth-service-route
+              uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
+              predicates:
+                - Path=/auth/**
+              filters:
+                - StripPrefix=1
 
-        - id: patient-service-route
-          uri: ${PATIENT_SERVICE_URL:http://patient-service:4000}
-          predicates:
-            - Path=/api/patients/**
-          filters:
-            - StripPrefix=1
-            - JwtValidation
+            # /api/patients/** -> patient-service /patients/** after the token check.
+            # "JwtValidation" = our class JwtValidationGatewayFilterFactory
+            # (Spring strips the "GatewayFilterFactory" suffix to get the name).
+            - id: patient-service-route
+              uri: ${PATIENT_SERVICE_URL:http://patient-service:4000}
+              predicates:
+                - Path=/api/patients/**
+              filters:
+                - StripPrefix=1
+                - JwtValidation
 
-        - id: api-docs-patient-route
-          uri: ${PATIENT_SERVICE_URL:http://patient-service:4000}
-          predicates:
-            - Path=/api-docs/patients
-          filters:
-            - RewritePath=/api-docs/patients,/v3/api-docs
+            - id: api-docs-patient-route
+              uri: ${PATIENT_SERVICE_URL:http://patient-service:4000}
+              predicates:
+                - Path=/api-docs/patients
+              filters:
+                - RewritePath=/api-docs/patients,/v3/api-docs
 
-        - id: api-docs-auth-route
-          uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
-          predicates:
-            - Path=/api-docs/auth
-          filters:
-            - RewritePath=/api-docs/auth,/v3/api-docs
+            - id: api-docs-auth-route
+              uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
+              predicates:
+                - Path=/api-docs/auth
+              filters:
+                - RewritePath=/api-docs/auth,/v3/api-docs
 
 auth:
   service:
@@ -42,4 +97,6 @@ auth:
 
 logging:
   level:
+    # PHASE 0 (step 0.2): the gateway's internal package names did not change, so the
+    # logger name stays the same.
     org.springframework.cloud.gateway: ${LOGGING_LEVEL_GATEWAY:info}

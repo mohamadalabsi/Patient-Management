@@ -6,7 +6,18 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.1</version>
+        <!--
+            PHASE 0 (step 0.2): 4.0.1 -> 4.0.9
+            The parent POM is a "BOM" (Bill Of Materials): it decides the versions of
+            every Spring/Jackson/Hibernate/Kafka/Flyway... library that Boot knows about.
+            All services now use the SAME Boot version, so they share the same
+            library versions and behave the same. 4.0.9 is the newest patch of the
+            4.0 line (patch releases = bug/security fixes only, no breaking changes).
+            We stay on 4.0.x and not 4.1 because the gateway's Spring Cloud release
+            train for 4.1 (2026.0) is not GA yet.
+        -->
+        <!-- PHASE 0 (old): <version>4.0.1</version> -->
+        <version>4.0.9</version>
         <relativePath/>
     </parent>
     <groupId>com.pm</groupId>
@@ -77,7 +88,13 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.8.4</version>
+            <!--
+                PHASE 0 (step 0.2): springdoc is NOT managed by the Boot BOM, so we must
+                pick a version ourselves. springdoc 2.x is built for Boot 3; springdoc
+                3.0.x is built for Boot 4.0 (3.2.x targets Boot 4.1).
+            -->
+            <!-- PHASE 0 (old): <version>2.8.4</version> -->
+            <version>3.0.3</version>
         </dependency>
         <dependency>
             <groupId>io.grpc</groupId>
@@ -100,20 +117,49 @@
             <version>6.0.53</version>
             <scope>provided</scope>
         </dependency>
+        <!--
+            PHASE 0 (step 0.2): removed the net.devh gRPC Spring Boot starter.
+            Why: that starter is for gRPC SERVERS (it scans for @GrpcService beans and
+            starts a gRPC server) plus a client injection helper (@GrpcClient).
+            patient-service is only a gRPC CLIENT and builds its channel by hand in
+            BillingServiceGrpcClient using plain io.grpc classes, which come from the
+            three grpc-* dependencies above. So the starter was unused weight.
+            The starter is also built for Boot 3 and no longer maintained.
+        -->
+        <!-- PHASE 0 (old):
         <dependency>
             <groupId>net.devh</groupId>
             <artifactId>grpc-spring-boot-starter</artifactId>
             <version>3.1.0.RELEASE</version>
         </dependency>
+        -->
         <dependency>
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java</artifactId>
             <version>4.29.1</version>
         </dependency>
+        <!--
+            PHASE 0 (step 0.2): plain spring-kafka 3.3.0 -> spring-boot-starter-kafka
+            Two problems with the old dependency:
+              1. The hard-coded 3.3.0 is the Boot-3 generation of Spring Kafka. Boot 4
+                 expects Spring Kafka 4.x. Hard-coding a version overrides the BOM and
+                 mixes generations (works by luck, breaks on the next upgrade).
+              2. In Boot 4 the Kafka AUTO-CONFIGURATION moved out of the core into its
+                 own module, which only the starter brings in. With plain spring-kafka,
+                 Boot creates no KafkaTemplate for you - that is one reason the project
+                 needed the hand-written KafkaProducerConfig class.
+            No <version> here: the Boot BOM picks the matching one (spring-kafka 4.0.8).
+        -->
+        <!-- PHASE 0 (old):
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
             <version>3.3.0</version>
+        </dependency>
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka</artifactId>
         </dependency>
     </dependencies>
 

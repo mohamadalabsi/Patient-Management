@@ -6,7 +6,15 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.4.1</version>
+        <!--
+            PHASE 0 (step 0.2): Boot 3.4.1 -> 4.0.9 (biggest jump of this phase).
+            Why: the other four services already run Boot 4; the gateway was the only
+            one left on Boot 3, and the 3.4 line no longer receives free (OSS)
+            security fixes. Same Boot version everywhere = same library versions,
+            same behaviour, one upgrade path.
+        -->
+        <!-- PHASE 0 (old): <version>3.4.1</version> -->
+        <version>4.0.9</version>
         <relativePath/>
     </parent>
     <groupId>com.pm</groupId>
@@ -16,12 +24,47 @@
     <description>api-gateway</description>
     <properties>
         <java.version>21</java.version>
-        <spring-cloud.version>2024.0.0</spring-cloud.version>
+        <!--
+            PHASE 0 (step 0.2): Spring Cloud is a "release train": a set of Spring Cloud
+            projects (Gateway, Config, ...) tested together against ONE Boot line.
+              2024.0.x -> Boot 3.4      2025.1.x -> Boot 4.0      2026.0.x -> Boot 4.1
+            So with Boot 4.0.9 we must use 2025.1.x (brings Spring Cloud Gateway 5.0.4).
+        -->
+        <!-- PHASE 0 (old): <spring-cloud.version>2024.0.0</spring-cloud.version> -->
+        <spring-cloud.version>2025.1.4</spring-cloud.version>
     </properties>
     <dependencies>
+        <!--
+            PHASE 0 (step 0.2): the gateway starter was RENAMED.
+            Spring Cloud Gateway now has two flavours:
+              - spring-cloud-starter-gateway-server-webflux  (reactive, Netty) <- what we use
+              - spring-cloud-starter-gateway-server-webmvc   (servlet, Tomcat)
+            The old name "spring-cloud-starter-gateway" no longer exists in Gateway 5.x.
+            Our gateway was always the reactive one (the filter returns Mono<Void>,
+            uses ServerWebExchange and WebClient), so we pick the webflux flavour.
+        -->
+        <!-- PHASE 0 (old):
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-gateway</artifactId>
+        </dependency>
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-gateway-server-webflux</artifactId>
+        </dependency>
+        <!--
+            PHASE 0 (step 0.2): NEW.
+            JwtValidationGatewayFilterFactory asks Spring for a WebClient.Builder to
+            call auth-service /validate. In Boot 3 that builder came with WebFlux.
+            Boot 4 split Spring Boot into smaller modules, and the WebClient
+            auto-configuration now lives in its own module (spring-boot-webclient).
+            Without this starter the gateway would fail at startup with
+            "No qualifying bean of type WebClient.Builder".
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webclient</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

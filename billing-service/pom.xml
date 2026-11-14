@@ -6,7 +6,12 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.2</version>
+        <!--
+            PHASE 0 (step 0.2): 4.0.2 -> 4.0.9 - same Boot version in every service
+            (the parent is a BOM that fixes all Spring library versions; see patient-service/pom.xml).
+        -->
+        <!-- PHASE 0 (old): <version>4.0.2</version> -->
+        <version>4.0.9</version>
         <relativePath/>
     </parent>
     <groupId>com.pm</groupId>
@@ -65,6 +70,14 @@
             <groupId>net.devh</groupId>
             <artifactId>grpc-spring-boot-starter</artifactId>
             <version>3.1.0.RELEASE</version>
+            <!--
+                PHASE 0 (step 0.2): KEPT on purpose (unlike in patient-service).
+                billing-service is a gRPC SERVER: this starter finds the @GrpcService
+                class (BillingGRPC) and starts the gRPC server on port 9001.
+                It is built for Boot 3 and no longer maintained, but it still runs on
+                Boot 4.0. Replacing it with the official "Spring gRPC" project is
+                planned for Phase 4 (gRPC resilience), as one isolated change.
+            -->
         </dependency>
         <dependency>
             <groupId>com.google.protobuf</groupId>
