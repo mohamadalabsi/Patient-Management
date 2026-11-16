@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Spring Boot microservices (Java 21, Maven), each service is an **independent Maven project** with its own `mvnw` — there is no root/parent POM. Services: `api-gateway` (4004), `auth-service` (4005), `patient-service` (4000), `billing-service` (HTTP 4002, gRPC 9001), `analytics-service` (4003). `Integration-tests/` is a separate Maven project (REST Assured) with no wrapper. `api-requests/` and `grpc-requests/` hold IntelliJ `.http` files for manual testing.
 
-The former `infrastructure/` (AWS CDK / LocalStack) folder was removed intentionally; the README's AWS/LocalStack sections are outdated. The gateway's `application-prod.yml` was written for that deployment and is currently unused.
+The former `infrastructure/` (AWS CDK / LocalStack) folder was removed intentionally (cloud returns with Terraform in roadmap phase 8). The gateway's `application-prod.yml` was written for that deployment and is currently unused.
 
-Spring Boot versions are **not aligned**: `api-gateway` is on Boot 3.4.1 (Spring Cloud Gateway, reactive/WebFlux), the other services are on Boot 4.0.x (servlet/WebMVC). Check the service's `pom.xml` before assuming an API or starter name.
+All services are on **Spring Boot 4.0.9** (aligned in Phase 0). `api-gateway` uses Spring Cloud 2025.1.x with `spring-cloud-starter-gateway-server-webflux` (routes under `spring.cloud.gateway.server.webflux.routes`) plus `spring-boot-starter-webclient`; the others are servlet/WebMVC. Boot 4 is modular: features like Kafka, Flyway, WebClient need their own `spring-boot-starter-*` for auto-configuration. Libraries outside the Boot BOM (springdoc 3.0.x, grpc 1.69, protobuf, `net.devh` gRPC server starter in billing only) are pinned by hand.
+
+Work is organised in phases (`docs/implementation-plans/roadmap.md`, one `phase-XX-*.md` per phase). Code convention in this repo: changes are explained in code comments tagged `PHASE n (step x.y)`, and replaced code is kept commented out as `PHASE n (old)` rather than deleted.
 
 ## Commands
 
@@ -29,24 +31,26 @@ docker run --rm -v "$PWD/patient-service":/ws -v pm-m2-cache:/root/.m2 -w /ws \
 ... mvn -B test -Dtest=ClassName#methodName
 ```
 
-With a local JDK, the equivalent is `./mvnw test` inside a service directory. Integration tests (`cd Integration-tests && mvn test`) hit `http://localhost:4004` and require the full compose stack running; they log in as `testuser@test.com` / `password123`, which is seeded by `auth-service/src/main/resources/data.sql`.
+With a local JDK, the equivalent is `./mvnw test` inside a service directory. Integration tests (`cd Integration-tests && mvn test`, or the maven container with `--network host`) hit `http://localhost:4004` and require the full compose stack running; they log in as `testuser@test.com` / `password123`, seeded by the dev-only Flyway migration `auth-service/src/main/resources/db/dev-data/R__dev_test_user.sql` (enabled via `SPRING_FLYWAY_LOCATIONS` in compose). Per-service `contextLoads` tests still need a real DB (fixed in Phase 1 with Testcontainers), hence `-DskipTests` in Dockerfiles.
 
-Each service's Dockerfile is a multi-stage Maven build (`mvn package -DskipTests`), so `docker compose up --build` compiles from source — no need to pre-build jars.
+Each service's Dockerfile is a multi-stage Maven build (`mvn package -DskipTests`), so `docker compose up --build` compiles from source — no need to pre-build jars. patient/billing/analytics are built with the **repo root** as build context (`dockerfile: <svc>/Dockerfile`) so they can copy `proto/`; root `.dockerignore` keeps the context small. All services have Actuator readiness healthchecks and start via `depends_on: service_healthy`.
 
 ## Architecture
 
 **Request flow:** client → `api-gateway` → downstream service. Gateway routes are defined in `api-gateway/src/main/resources/application.yml`:
 - `/auth/**` → auth-service (prefix stripped, so `/auth/login` → `/login`)
-- `/api/patients/**` → patient-service (prefix stripped → `/patients/**`), guarded by the custom `JwtValidation` filter
+- `/api/patients/**` → patient-service (prefix stripped → `/patients/**`), guarded by the custom `JwtValidation` filter (3s timeout; auth 4xx → 401, unreachable/5xx → 503, Problem Details body)
 - `/api-docs/{patients,auth}` → each service's `/v3/api-docs`
 
 **Auth:** `auth-service` issues HS256 JWTs (jjwt, secret from `JWT_SECRET`) and exposes `GET /validate`. The gateway's `JwtValidationGatewayFilterFactory` does **not** verify tokens itself — it forwards the `Authorization` header to auth-service `/validate` per request. Downstream services (patient, billing, analytics) have no security of their own.
 
-**Patient creation fan-out** (`PatientService.createPatient`):
-1. Persist to PatientDB (Postgres, JPA, `ddl-auto: update` — no migrations tool).
-2. Synchronous gRPC call to billing-service `CreateBillingAccount` via `BillingServiceGrpcClient` (address/port from `BILLING_SERVICE_ADDRESS`/`BILLING_SERVICE_PORT`).
-3. Publish a protobuf-serialized `PatientEvent` (as `byte[]`) to Kafka topic `patient`; `analytics-service` consumes it with `@KafkaListener(topics = "patient")` and currently only logs it.
+**Patient creation fan-out** (`PatientService.createPatient`, `@Transactional`):
+1. `saveAndFlush` to PatientDB (schema owned by **Flyway** `db/migration`, Hibernate `ddl-auto: validate`).
+2. Synchronous gRPC call to billing-service `CreateBillingAccount` via `BillingServiceGrpcClient` with a deadline (`BILLING_SERVICE_DEADLINE`, default 3s). Failure → `BillingServiceUnavailableException` → rollback → HTTP 503.
+3. Publishes an in-JVM `PatientCreatedEvent`; `PatientEventListener` (`@TransactionalEventListener(AFTER_COMMIT)`) sends the protobuf `PatientEvent` to Kafka topic `patient`, keyed by patient id. `analytics-service` consumes it and logs IDs only. Kafka config lives only in `application.yml` (Boot auto-config; the old Java config classes are commented out). Known gap until Phase 4 (outbox): event lost if the send fails after commit.
 
-**Protobuf contracts are duplicated, not shared.** `billing_service.proto` lives in both `patient-service/src/main/proto` and `billing-service/src/main/proto`; `kafka_service.proto` lives in both `patient-service` and `analytics-service` (analytics also has a stray copy at `src/main/kafka_service.proto`). When changing a contract, update every copy. Java classes are generated at build time by `protobuf-maven-plugin` (+ `os-maven-plugin` extension) into `target/` — they are not checked in.
+Errors in patient-service are RFC 9457 `ProblemDetail`s (`GlobalExceptionHandler extends ResponseEntityExceptionHandler`): 400 validation/malformed, 404 not found, 409 duplicate email (incl. constraint races), 503 billing down. `GET /patients` is paginated (`PagedModel`, max size 100). Logs must not contain patient PII (name/email) — log IDs only.
 
-**Configuration:** each service's `application.yml` holds non-secret defaults with `${ENV:default}` placeholders; secrets (DB creds, `JWT_SECRET`) come only from the root `.env` via `docker-compose.yml`, which uses `${VAR:?}` so compose fails fast if one is missing. Two Postgres containers: patient DB on host port 5000, auth DB on 5001. Kafka (KRaft, single node) is `kafka:9092` inside the network and `localhost:9094` from the host.
+**Protobuf contracts live once in root `proto/`** (`billing_service.proto`, `patient_event.proto`). Each service's `protobuf-maven-plugin` uses `<protoSourceRoot>${project.basedir}/../proto</protoSourceRoot>` with `<includes>` for only the contracts it needs; the old per-service copies are commented out and no longer compiled. Never change or reuse field numbers. Java classes are generated at build time into `target/` — not checked in.
+
+**Configuration:** each service's `application.yml` holds non-secret defaults with `${ENV:default}` placeholders; secrets (DB creds, `JWT_SECRET`) come only from the root `.env` via `docker-compose.yml`, which uses `${VAR:?}` so compose fails fast if one is missing. Two Postgres containers: patient DB on host port 5000, auth DB on 5001. Kafka (`apache/kafka:4.3.2`, KRaft, single node) is `kafka:9092` inside the network and `localhost:9094` from the host. Actuator exposes only `health`/`info` (liveness/readiness probes enabled).

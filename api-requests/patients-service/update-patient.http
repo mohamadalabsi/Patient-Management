@@ -1,7 +1,16 @@
-### PUT request to update patient information
+### PHASE 0 (step 0.10): fixed (audit B10).
+# In the old file the header lines were INDENTED. The .http format expects headers
+# at the start of the line, so they were not sent as headers.
+# Replace {id} with a real id from get-patients.http (unknown id -> 404).
+#
+# PHASE 0 (old):
+# PUT http://localhost:4004/api/patients/{id}
+#     Content-Type: application/json
+#     Authorization: Bearer {{token}}
+
 PUT http://localhost:4004/api/patients/{id}
-    Content-Type: application/json
-    Authorization: Bearer {{token}}
+Content-Type: application/json
+Authorization: Bearer {{token}}
 
 {
   "name": "Updated Name",
@@ -9,5 +18,3 @@ PUT http://localhost:4004/api/patients/{id}
   "address": "456 New St, Frankfurt, Germany",
   "birthDate": "1990-01-15"
 }
-
-###
