@@ -14,7 +14,11 @@ spring:
       # a field but forgot the migration). It never changes the database anymore.
       # PHASE 0 (old): ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
       ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
-    show-sql: ${SPRING_JPA_SHOW_SQL:true}
+    # PHASE 0 (step 0.9): true -> false by default. show-sql prints EVERY SQL
+    # statement to stdout (bypassing the logging system and its levels). Noisy and
+    # slow under load. Turn it on only while debugging: SPRING_JPA_SHOW_SQL=true
+    # PHASE 0 (old): show-sql: ${SPRING_JPA_SHOW_SQL:true}
+    show-sql: ${SPRING_JPA_SHOW_SQL:false}
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
