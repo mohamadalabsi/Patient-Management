@@ -137,6 +137,20 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     /**
+     * PHASE 0 (step 0.7): 503 Service Unavailable when billing-service cannot be
+     * reached or is too slow. 503 tells the client "temporary problem on the server
+     * side, retrying later may work" - unlike 400 (your fault) or 500 (our bug).
+     * The patient was NOT saved (transaction rolled back), so a retry is safe.
+     */
+    @ExceptionHandler(BillingServiceUnavailableException.class)
+    public ProblemDetail handleBillingUnavailable(BillingServiceUnavailableException ex) {
+        log.error("Patient creation aborted: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+                "Billing service is temporarily unavailable. The patient was not created; please retry later.");
+        return problem;
+    }
+
+    /**
      * 400 for an unknown sort field, e.g. GET /patients?sort=password.
      * Spring Data cannot map it to an entity property and throws
      * PropertyReferenceException - client error, not a server bug.

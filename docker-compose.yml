@@ -50,6 +50,9 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${PATIENT_DB_PASSWORD:?PATIENT_DB_PASSWORD is required}
       BILLING_SERVICE_ADDRESS: billing-service
       BILLING_SERVICE_PORT: 9001
+      # PHASE 0 (step 0.7): max time patient-service waits for a billing gRPC call
+      # (Spring Duration format: 3s, 500ms ...). Bound to billing.service.deadline.
+      BILLING_SERVICE_DEADLINE: 3s
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
 
   billing-service:

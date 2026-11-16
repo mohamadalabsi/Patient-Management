@@ -42,7 +42,17 @@ spring:
       pageable:
         max-page-size: 100
   kafka:
+    # PHASE 0 (step 0.7): now the ONLY place for Kafka settings (KafkaProducerConfig
+    # is disabled; Spring Boot builds the KafkaTemplate from these properties).
+    # Docker Compose overrides it with SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092.
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
+      # PHASE 0 (step 0.7): if the broker is unreachable, send() BLOCKS the calling
+      # thread while it waits for topic metadata - by default up to 60 seconds.
+      # Our send runs right after the HTTP request's commit, so the client would
+      # wait 60s. 5s is enough for a healthy broker and fails fast otherwise.
+      properties:
+        max.block.ms: 5000
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
 

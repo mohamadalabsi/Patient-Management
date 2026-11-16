@@ -6,13 +6,15 @@ import com.pm.patientservice.dto.PatientResponseDTO;
 import com.pm.patientservice.exception.EmailAlreadyExistException;
 import com.pm.patientservice.exception.PatientNotFoundException;
 import com.pm.patientservice.grpc.BillingServiceGrpcClient;
-import com.pm.patientservice.kafka.KafkaProducer;
+import com.pm.patientservice.kafka.PatientCreatedEvent;
 import com.pm.patientservice.mapper.PatientMapper;
 import com.pm.patientservice.model.Patient;
 import com.pm.patientservice.repository.PatientRepo;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
@@ -30,7 +32,11 @@ public class PatientService {
     // never used here - all sending goes through KafkaProducer. Unused
     // dependencies make a class look more complicated than it is.
     // PHASE 0 (old): private final KafkaTemplate<String, byte[]> kafkaTemplate;
-    private final KafkaProducer kafkaProducer;
+    // PHASE 0 (step 0.7): the service no longer talks to Kafka directly. It only
+    // announces "patient created" inside the JVM; PatientEventListener sends the
+    // Kafka message after the commit.
+    // PHASE 0 (old): private final KafkaProducer kafkaProducer;
+    private final ApplicationEventPublisher eventPublisher;
 
     // PHASE 0 (old):
     // public PatientService(PatientRepo patientRepo , BillingServiceGrpcClient billingServiceGrpcClient, KafkaTemplate<String, byte[]> kafkaTemplate, KafkaProducer kafkaProducer) {
@@ -41,13 +47,29 @@ public class PatientService {
     // }
     public PatientService(PatientRepo patientRepo,
                           BillingServiceGrpcClient billingServiceGrpcClient,
-                          KafkaProducer kafkaProducer) {
+                          ApplicationEventPublisher eventPublisher) {
         this.billingServiceGrpcClient = billingServiceGrpcClient;
         this.patientRepo = patientRepo;
-        this.kafkaProducer = kafkaProducer;
+        this.eventPublisher = eventPublisher;
     }
 
 
+    // PHASE 0 (step 0.7): interim fix for the dual-write problem (audit B1).
+    //
+    // @Transactional: everything in this method runs in ONE database transaction.
+    // Spring opens it before the method and COMMITs after it returns normally. If a
+    // RuntimeException leaves the method (e.g. BillingServiceUnavailableException),
+    // Spring ROLLS BACK: the INSERT is undone, as if it never happened.
+    //   Before: billing down -> patient saved anyway, client got 500, no billing
+    //           account, no event, and a retry failed with "email already exists".
+    //   Now:    billing down -> no patient row, client gets 503, retry later works.
+    //
+    // Trade-off: the DB transaction (and a pooled DB connection) stays open while we
+    // wait for billing (max = gRPC deadline, 3s). Acceptable at our scale; Phase 4
+    // replaces the synchronous call with the outbox pattern.
+    // Remaining gap: billing succeeds but the COMMIT fails -> billing has an account
+    // for a patient that does not exist. Also solved in Phase 4.
+    @Transactional
     public PatientResponseDTO createPatient(PatientRequestDTO patientRequestDTO) {
 
         // PHASE 0 (step 0.9): the e-mail is no longer put into the exception message
@@ -58,12 +80,23 @@ public class PatientService {
         if  (patientRepo.existsByEmail(patientRequestDTO.getEmail())) {
             throw new EmailAlreadyExistException("A patient with this email already exists");
         }
-        Patient newPatient= patientRepo.save(PatientMapper.toEntity(patientRequestDTO));
+        // PHASE 0 (step 0.7): save -> saveAndFlush.
+        // Inside a transaction, save() only remembers the entity; Hibernate sends the
+        // INSERT later (at commit). Then a UNIQUE-email violation would show up only
+        // AFTER we already called billing. saveAndFlush() sends the INSERT NOW, so a
+        // duplicate fails here (-> 409) and billing is never called for it.
+        // PHASE 0 (old): Patient newPatient= patientRepo.save(PatientMapper.toEntity(patientRequestDTO));
+        Patient newPatient = patientRepo.saveAndFlush(PatientMapper.toEntity(patientRequestDTO));
 
+        // Throws BillingServiceUnavailableException on failure -> rollback -> 503.
         billingServiceGrpcClient.createBillingAccount(newPatient.getId().toString(),
                 newPatient.getName(), newPatient.getEmail());
 
-        kafkaProducer.sendEvent(newPatient);
+        // PHASE 0 (step 0.7): publish an in-memory event instead of sending to Kafka
+        // here. It is delivered to PatientEventListener only AFTER the commit, so
+        // Kafka never hears about a patient that was rolled back.
+        // PHASE 0 (old): kafkaProducer.sendEvent(newPatient);
+        eventPublisher.publishEvent(new PatientCreatedEvent(newPatient));
 
         return PatientMapper.toDto(newPatient);
     }
