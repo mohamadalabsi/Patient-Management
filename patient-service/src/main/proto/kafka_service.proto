@@ -1,15 +1,23 @@
+// -----------------------------------------------------------------------------
+// PHASE 0 (step 0.3): DISABLED - this per-service copy is no longer compiled.
+// The contract now lives ONCE in the repo root: proto/patient_event.proto
+// (patient-service/pom.xml points <protoSourceRoot> at ../proto).
+// Kept below, commented out, only as a record of the old version.
+// -----------------------------------------------------------------------------
 
-syntax = "proto3";
-package patient.events;
-
-option java_multiple_files=true;
-
-message PatientEvent {
-    string patientId = 1;
-    string name = 2;
-    string email = 3;
-    string event_type = 4;
-
-}
-
-
+// PHASE 0 (old):
+//
+//syntax = "proto3";
+//package patient.events;
+//
+//option java_multiple_files=true;
+//
+//message PatientEvent {
+//    string patientId = 1;
+//    string name = 2;
+//    string email = 3;
+//    string event_type = 4;
+//
+//}
+//
+//

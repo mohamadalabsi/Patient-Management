@@ -1,20 +1,28 @@
+// -----------------------------------------------------------------------------
+// PHASE 0 (step 0.3): DISABLED - this per-service copy is no longer compiled.
+// The contract now lives ONCE in the repo root: proto/billing_service.proto
+// (patient-service/pom.xml points <protoSourceRoot> at ../proto).
+// Kept below, commented out, only as a record of the old version.
+// -----------------------------------------------------------------------------
 
-
-syntax="proto3";
-option java_multiple_files = true;
-option java_package = "billing";
-
-
-service BillingService {
-     rpc CreateBillingAccount (BillingRequest) returns (BillingResponse);
-}
-message BillingRequest {
-  string patientId = 1;
-  string name = 2;
-  string email = 3;
-}
-message BillingResponse {
-  string accountId = 1;
-  string status = 2;
-}
-
+// PHASE 0 (old):
+//
+//
+//syntax="proto3";
+//option java_multiple_files = true;
+//option java_package = "billing";
+//
+//
+//service BillingService {
+//     rpc CreateBillingAccount (BillingRequest) returns (BillingResponse);
+//}
+//message BillingRequest {
+//  string patientId = 1;
+//  string name = 2;
+//  string email = 3;
+//}
+//message BillingResponse {
+//  string accountId = 1;
+//  string status = 2;
+//}
+//

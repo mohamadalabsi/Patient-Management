@@ -107,6 +107,16 @@
                 <artifactId>protobuf-maven-plugin</artifactId>
                 <version>0.6.1</version>
                 <configuration>
+                    <!--
+                        PHASE 0 (step 0.3): read .proto files from the SHARED root folder
+                        ../proto instead of this service's own src/main/proto.
+                        <includes> limits which contracts this service compiles:
+                        billing-service only implements the gRPC server, so it needs only the billing contract.
+                    -->
+                    <protoSourceRoot>${project.basedir}/../proto</protoSourceRoot>
+                    <includes>
+                        <include>billing_service.proto</include>
+                    </includes>
                     <protocArtifact>com.google.protobuf:protoc:3.25.5:exe:${os.detected.classifier}</protocArtifact>
                     <pluginId>grpc-java</pluginId>
                     <pluginArtifact>io.grpc:protoc-gen-grpc-java:1.68.1:exe:${os.detected.classifier}</pluginArtifact>

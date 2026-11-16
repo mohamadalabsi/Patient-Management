@@ -98,6 +98,16 @@
                 <artifactId>protobuf-maven-plugin</artifactId>
                 <version>0.6.1</version>
                 <configuration>
+                    <!--
+                        PHASE 0 (step 0.3): read .proto files from the SHARED root folder
+                        ../proto instead of this service's own src/main/proto.
+                        <includes> limits which contracts this service compiles:
+                        analytics-service only consumes Kafka events, so it needs only the event contract.
+                    -->
+                    <protoSourceRoot>${project.basedir}/../proto</protoSourceRoot>
+                    <includes>
+                        <include>patient_event.proto</include>
+                    </includes>
                     <!--suppress UnresolvedMavenProperty -->
                     <protocArtifact>com.google.protobuf:protoc:3.25.5:exe:${os.detected.classifier}</protocArtifact>
                     <pluginId>grpc-java</pluginId>

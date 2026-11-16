@@ -1,0 +1,24 @@
+// -----------------------------------------------------------------------------
+// PHASE 0 (step 0.3): SINGLE SOURCE OF TRUTH for the Kafka event contract.
+//
+// Before: this was "kafka_service.proto", copied into patient-service (producer)
+// and analytics-service (consumer), plus a third stray copy. Renamed to
+// "patient_event.proto" because it describes an EVENT, not a "Kafka service".
+// The package and message name are unchanged, so the generated Java class is
+// still patient.events.PatientEvent - no Java code had to change.
+//
+// The producer serialises PatientEvent to bytes (toByteArray) and the consumer
+// parses them (parseFrom). Both must use the same field numbers, which is
+// exactly why there must be only one copy of this file.
+// -----------------------------------------------------------------------------
+syntax = "proto3";
+package patient.events;
+
+option java_multiple_files = true;
+
+message PatientEvent {
+  string patientId = 1;
+  string name = 2;
+  string email = 3;
+  string event_type = 4;   // e.g. "PATIENT_CREATED"
+}
