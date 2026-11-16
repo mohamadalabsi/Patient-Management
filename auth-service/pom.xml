@@ -72,6 +72,27 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
+        <!--
+            PHASE 0 (step 0.5): NEW - Flyway database migrations.
+            Before, Hibernate changed the schema itself (ddl-auto=update). That cannot
+            rename/drop columns safely, is not reviewable in a pull request and cannot
+            be reproduced exactly on another database. With Flyway the schema is
+            defined by versioned SQL files in src/main/resources/db/migration that
+            run once each, in order, on startup.
+            - spring-boot-starter-flyway: Boot 4 moved the Flyway auto-configuration
+              into its own starter.
+            - flyway-database-postgresql: since Flyway 10, support for each database
+              is a separate module.
+            Both versions come from the Boot BOM.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>

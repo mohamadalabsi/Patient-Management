@@ -8,14 +8,35 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
-      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+      # PHASE 0 (step 0.5): update -> validate.
+      # Flyway now OWNS the schema. Hibernate only CHECKS at startup that the tables
+      # match the @Entity classes and refuses to start if they don't (e.g. you added
+      # a field but forgot the migration). It never changes the database anymore.
+      # PHASE 0 (old): ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
     show-sql: ${SPRING_JPA_SHOW_SQL:false}
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
   sql:
     init:
-      mode: ${SPRING_SQL_INIT_MODE:always}
+      # PHASE 0 (step 0.5): always -> never. Spring's simple schema.sql/data.sql
+      # mechanism is replaced by Flyway; running both would mean two tools
+      # fighting over the same tables.
+      # PHASE 0 (old): mode: ${SPRING_SQL_INIT_MODE:always}
+      mode: ${SPRING_SQL_INIT_MODE:never}
+  # PHASE 0 (step 0.5): Flyway settings.
+  flyway:
+    # Our databases already contain tables created by Hibernate, but no
+    # "flyway_schema_history" table. Flyway would refuse to touch such a
+    # non-empty, unknown database. baseline-on-migrate tells it: "record the
+    # current state as version 1 (baseline-version) and only run newer scripts".
+    # A brand-new, empty database ignores this and runs V1 normally.
+    baseline-on-migrate: true
+    baseline-version: 1
+    # Only real schema migrations by default. The dev test user (db/dev-data) is
+    # added via SPRING_FLYWAY_LOCATIONS in docker-compose.yml - never in prod.
+    locations: ${SPRING_FLYWAY_LOCATIONS:classpath:db/migration}
 
 server:
   port: ${SERVER_PORT:4005}
