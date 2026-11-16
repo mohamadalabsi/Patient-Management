@@ -81,6 +81,9 @@ spring:
 auth:
   service:
     url: ${AUTH_SERVICE_URL}
+    # PHASE 0 (step 0.8): NEW - max wait for auth-service /validate. Without it a
+    # down auth-service made clients wait ~30s (TCP connect timeout) and get 500.
+    timeout: ${AUTH_SERVICE_TIMEOUT:3s}
 
 logging:
   level:
