@@ -36,6 +36,17 @@
         <java.version>21</java.version>
     </properties>
     <dependencies>
+        <!--
+            PHASE 0 (step 0.4): NEW - Spring Boot Actuator.
+            Adds production endpoints under /actuator, most importantly
+            /actuator/health. Docker (now) and Kubernetes (Phase 7) call it to ask
+            "is this service really ready?" instead of only "is the process running?".
+            In Phase 5 the same library exposes metrics for Prometheus.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>

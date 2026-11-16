@@ -35,6 +35,17 @@
     </properties>
     <dependencies>
         <!--
+            PHASE 0 (step 0.4): NEW - Spring Boot Actuator.
+            Adds production endpoints under /actuator, most importantly
+            /actuator/health. Docker (now) and Kubernetes (Phase 7) call it to ask
+            "is this service really ready?" instead of only "is the process running?".
+            In Phase 5 the same library exposes metrics for Prometheus.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!--
             PHASE 0 (step 0.2): the gateway starter was RENAMED.
             Spring Cloud Gateway now has two flavours:
               - spring-cloud-starter-gateway-server-webflux  (reactive, Netty) <- what we use

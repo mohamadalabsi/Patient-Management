@@ -27,3 +27,28 @@ server:
 logging:
   level:
     root: ${LOGGING_LEVEL_ROOT:info}
+
+# -----------------------------------------------------------------------------
+# PHASE 0 (step 0.4): Actuator / health checks.
+#
+# - Expose ONLY "health" and "info" over HTTP. Actuator has many endpoints
+#   (env, beans, heapdump ...) that leak internals; never expose them publicly.
+# - probes.enabled adds two special health groups:
+#     /actuator/health/liveness   -> "is the process alive?"   (if not: restart it)
+#     /actuator/health/readiness  -> "can it take traffic now?" (if not: don't send
+#                                     requests yet, e.g. still starting up)
+#   Docker Compose uses readiness in its healthcheck; Kubernetes (Phase 7) will
+#   use both as livenessProbe / readinessProbe.
+# - show-details: never -> the public response is only {"status":"UP"}; details
+#   (DB host, disk space ...) are not leaked.
+# -----------------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
