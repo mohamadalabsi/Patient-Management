@@ -193,6 +193,50 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-kafka</artifactId>
         </dependency>
+        <!--
+            PHASE 1 (step 1.1): NEW - test dependencies (all <scope>test</scope>: they are
+            on the classpath only while tests compile/run, never in the jar or the image).
+            No <version> on most of them: the Spring Boot 4.0.9 BOM manages them
+            (Testcontainers 2.0.5, Awaitility 4.3.0, JUnit 6, Mockito 5, AssertJ 3).
+            - spring-boot-testcontainers: @ServiceConnection - Boot reads the URL/user/password of
+              a container started by the test and configures the app with it (no properties).
+            - testcontainers-*: starts REAL throwaway Postgres/Kafka in Docker for the test run.
+              Testcontainers 2.x renamed its modules to "testcontainers-<module>".
+            - spring-boot-starter-kafka-test: spring-kafka-test (KafkaTestUtils helpers to
+              read/write test records).
+            - awaitility: wait for something asynchronous (a Kafka message) with a timeout
+              instead of Thread.sleep - makes async tests fast AND not flaky.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

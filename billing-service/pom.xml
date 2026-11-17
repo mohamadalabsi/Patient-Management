@@ -99,6 +99,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot</artifactId>
         </dependency>
+        <!--
+            PHASE 1 (step 1.1): NEW - test dependencies (all <scope>test</scope>: they are
+            on the classpath only while tests compile/run, never in the jar or the image).
+            No <version> on most of them: the Spring Boot 4.0.9 BOM manages them
+            (Testcontainers 2.0.5, Awaitility 4.3.0, JUnit 6, Mockito 5, AssertJ 3).
+            - grpc-inprocess: an in-memory gRPC server/channel for tests (no network, no ports).
+              Not in the Boot BOM, so pinned to the same 1.69.0 as the other grpc-* artifacts.
+        -->
+        <dependency>
+            <groupId>io.grpc</groupId>
+            <artifactId>grpc-inprocess</artifactId>
+            <version>1.69.0</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <extensions>

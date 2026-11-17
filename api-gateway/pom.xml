@@ -82,6 +82,20 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+            PHASE 1 (step 1.1): NEW - test dependencies (all <scope>test</scope>: they are
+            on the classpath only while tests compile/run, never in the jar or the image).
+            No <version> on most of them: the Spring Boot 4.0.9 BOM manages them
+            (Testcontainers 2.0.5, Awaitility 4.3.0, JUnit 6, Mockito 5, AssertJ 3).
+            - spring-boot-starter-webflux-test: WebTestClient to call the running gateway in tests
+              (Boot 4 moved it into its own test module). The stub auth/patient servers in the
+              gateway tests use the JDK's built-in com.sun.net.httpserver - no extra library.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <dependencyManagement>
         <dependencies>
