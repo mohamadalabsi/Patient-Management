@@ -36,4 +36,4 @@ phase established, so later work follows the same rules.
 | Phase | Skill |
 |---|---|
 | 0 - fixes & foundation | `skills/service-conventions` - code style, service structure, API, DB, messaging, Docker |
-| 1 - testing safety net | (written at the end of Phase 1) |
+| 1 - testing safety net | `skills/testing-conventions` - which test for which change, Testcontainers, fakes, naming, Maven setup, how to run |
