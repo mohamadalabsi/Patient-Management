@@ -42,4 +42,8 @@ exec docker run --rm \
   -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal \
   -w /workspace/"$SERVICE" \
   maven:3.9.9-eclipse-temurin-21 \
-  mvn -B test "$@"
+  mvn -B clean test "$@"
+# "clean" on purpose: Maven never deletes files from target/ whose source was removed.
+# A stale target/classes/application.properties from an old build (sql.init.mode=always,
+# ddl-auto=update) silently overrode application.yml and broke the auth tests once.
+# Starting from an empty target/ makes test runs reproducible (same as CI and Docker).
