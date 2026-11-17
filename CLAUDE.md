@@ -33,16 +33,18 @@ docker compose up --build
 docker compose up --build patient-service      # rebuild one service
 docker compose down -v                         # also wipes DB volumes (needed after changing DB creds in .env)
 
-# Build/test a single service without a local JDK (cache deps in a named volume)
-docker run --rm -v "$PWD/patient-service":/ws -v pm-m2-cache:/root/.m2 -w /ws \
-  maven:3.9.9-eclipse-temurin-21 mvn -B test
+# Test one service without a local JDK (maven image + Docker socket for Testcontainers)
+scripts/mvn-test.sh patient-service
+scripts/mvn-test.sh patient-service -Dtest=PatientControllerTest          # one class
+scripts/mvn-test.sh patient-service -Dtest='PatientServiceTest*#create*'  # methods (nested classes need the *)
 
-# Single test class / method
-... mvn -B test -Dtest=PatientServiceApplicationTests
-... mvn -B test -Dtest=ClassName#methodName
+# End-to-end tests against the running compose stack
+docker run --rm -v "$PWD/Integration-tests":/ws -v pm-m2-cache:/root/.m2 -w /ws \
+  --add-host=host.docker.internal:host-gateway maven:3.9.9-eclipse-temurin-21 \
+  mvn -B test -Dgateway.url=http://host.docker.internal:4004
 ```
 
-With a local JDK, the equivalent is `./mvnw test` inside a service directory. Integration tests (`cd Integration-tests && mvn test`, or the maven container with `--network host`) hit `http://localhost:4004` and require the full compose stack running; they log in as `testuser@test.com` / `password123`, seeded by the dev-only Flyway migration `auth-service/src/main/resources/db/dev-data/R__dev_test_user.sql` (enabled via `SPRING_FLYWAY_LOCATIONS` in compose). Per-service `contextLoads` tests still need a real DB (fixed in Phase 1 with Testcontainers), hence `-DskipTests` in Dockerfiles.
+With a local JDK, the equivalent is `./mvnw test` inside a service directory. Per-service tests need only Docker: Testcontainers starts `postgres:16` / `apache/kafka:4.3.2` (same images as compose) and `@ServiceConnection` wires them; no `.env`, no fixed ports. `scripts/mvn-test.sh` always runs `mvn clean test` (stale `target/` files once overrode `application.yml`). Mockito runs as a `-javaagent` configured in each POM's surefire plugin (self-attach fails on Java 21 in the container). Test classes must end in `Test`/`Tests` - surefire ignores `*IT`. Follow `.claude/skills/testing-conventions` when writing tests. `Integration-tests/` (REST Assured E2E) logs in as `testuser@test.com` / `password123`, seeded by the dev-only Flyway migration `auth-service/src/main/resources/db/dev-data/R__dev_test_user.sql` (enabled via `SPRING_FLYWAY_LOCATIONS` in compose). Dockerfiles keep `-DskipTests` (Testcontainers inside `docker build` would need Docker-in-Docker); tests run as their own step.
 
 Each service's Dockerfile is a multi-stage Maven build (`mvn package -DskipTests`), so `docker compose up --build` compiles from source — no need to pre-build jars. patient/billing/analytics are built with the **repo root** as build context (`dockerfile: <svc>/Dockerfile`) so they can copy `proto/`; root `.dockerignore` keeps the context small. All services have Actuator readiness healthchecks and start via `depends_on: service_healthy`.
 

@@ -185,7 +185,7 @@ docs/
 | Phase | Branch | Status |
 |---|---|---|
 | 0 | `feature/phase-00-fixes-and-foundation` | ✅ done (2026-11-16) — [phase-00](phase-00-fixes-and-foundation.md) |
-| 1 | `feature/phase-01-testing` | 🟡 in progress — [phase-01](phase-01-testing.md) |
+| 1 | `feature/phase-01-testing` | ✅ done (2026-11-17) — [phase-01](phase-01-testing.md) |
 | 2 | – | not started |
 | 3 | – | not started |
 | 4 | – | not started |

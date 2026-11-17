@@ -58,7 +58,7 @@ Only the gateway (4004) is the intended entry point. patient-service and auth-se
 | Errors | RFC 9457 Problem Details |
 | Ops | Spring Boot Actuator health probes |
 | Build / Run | Maven, Docker, Docker Compose |
-| Testing | JUnit, REST Assured |
+| Testing | JUnit 5, Mockito, AssertJ, Spring test slices, **Testcontainers** (Postgres, Kafka), Awaitility, in-process gRPC, REST Assured |
 
 ## 🚀 Getting Started
 
@@ -197,17 +197,44 @@ The gateway's is reachable at `http://localhost:4004/actuator/health`.
 
 ## 🧪 Testing
 
-End-to-end tests (REST Assured) run against the running stack on `localhost:4004`:
+Two kinds of test suites (details: [phase-01-testing.md](docs/implementation-plans/phase-01-testing.md)):
+
+**1. Per-service tests** (`<service>/src/test`) - unit, web/repository slices, and integration tests
+against **real Postgres/Kafka started by Testcontainers**. They need **only Docker** - no compose
+stack, no `.env`, no fixed ports (they also run while the stack is up).
+
+```bash
+scripts/mvn-test.sh patient-service                                   # one service, all tests
+scripts/mvn-test.sh patient-service -Dtest=PatientControllerTest      # one class
+scripts/mvn-test.sh patient-service -Dtest='PatientServiceTest*#create*'
+# with a local JDK instead:  cd patient-service && ./mvnw test
+```
+
+The script runs `mvn clean test` in the `maven:3.9.9-eclipse-temurin-21` image with the Docker socket
+mounted, so Testcontainers can start sibling containers.
+
+| Service | Tests | Runtime* | What is covered |
+|---|---|---|---|
+| patient-service | 39 | ~80 s | service rules (Mockito), HTTP contract (`@WebMvcTest`), repository on real Postgres (`@DataJpaTest`), creation flow: rollback + after-commit Kafka event + gRPC deadline (fake billing server) |
+| auth-service | 23 | ~45 s | JWT (tampered/expired/foreign key), login rules, `/login` + `/validate` contract, login against real Postgres, no dev user in prod |
+| billing-service | 3 | ~25 s | gRPC API over in-process transport |
+| analytics-service | 3 | ~25 s | Kafka consumer on real Kafka, malformed message skipped, no PII logged |
+| api-gateway | 9 | ~27 s | JWT filter against stub services: 401 / 503 / timeout, routing |
+
+\* on a laptop with Docker Desktop, images cached; includes Maven startup and `clean`.
+
+The Dockerfiles still build with `-DskipTests`: running Testcontainers inside `docker build`
+would need Docker-in-Docker. Tests run as their own step (CI from roadmap phase 2).
+
+**2. End-to-end tests** (`Integration-tests/`, REST Assured) call the running stack through the gateway:
 
 ```bash
 docker compose up -d --build
-cd Integration-tests && mvn test
-# without a local Maven:
-docker run --rm --network host -v "$PWD/Integration-tests":/ws -v pm-m2-cache:/root/.m2 -w /ws \
-  maven:3.9.9-eclipse-temurin-21 mvn -B test
+docker run --rm -v "$PWD/Integration-tests":/ws -v pm-m2-cache:/root/.m2 -w /ws \
+  --add-host=host.docker.internal:host-gateway maven:3.9.9-eclipse-temurin-21 \
+  mvn -B test -Dgateway.url=http://host.docker.internal:4004
+# with a local JDK:  cd Integration-tests && mvn test      (default gateway.url = http://localhost:4004)
 ```
-
-Unit/integration tests per service (Testcontainers) are planned in roadmap phase 1.
 
 ## 🔐 Environment Variables and Configuration
 
@@ -247,6 +274,8 @@ Patient-Management/
 ├── analytics-service/    # Kafka consumer
 ├── proto/                # Shared gRPC + Kafka Protobuf contracts
 ├── Integration-tests/    # REST Assured end-to-end tests
+├── scripts/mvn-test.sh   # run one service's tests in Docker (no local JDK)
+├── .claude/              # Claude Code settings + project skills (one per roadmap phase)
 ├── api-requests/         # IntelliJ .http requests
 ├── grpc-requests/        # IntelliJ gRPC requests
 ├── docs/implementation-plans/  # Roadmap and per-phase plans

@@ -4,7 +4,7 @@
 |---|---|
 | Branch | `feature/phase-01-testing` (from `dev-branch` after PR #2) |
 | Depends on | Phase 0 |
-| Status | 🟡 in progress |
+| Status | ✅ done (2026-11-17) |
 | Audit items | B7, section 4.4 "Missing tests" |
 
 ## Goal
@@ -178,16 +178,17 @@ how to run tests through Docker. Plus a row in `.claude/README.md`.
 
 ## Verification (definition of done)
 
-- [ ] `mvn test` passes in all 5 services (through the Docker command from 1.1) with **no compose stack running**
-- [ ] No test needs `.env`, a running service, or a fixed port
-- [ ] Every behaviour in the Phase 0 smoke test (status codes, rollback, after-commit event, gateway 401/503) has
+- [x] `mvn test` passes in all 5 services (through the Docker command from 1.1) with **no compose stack running**
+      (and also while it runs - no port clashes)
+- [x] No test needs `.env`, a running service, or a fixed port
+- [x] Every behaviour in the Phase 0 smoke test (status codes, rollback, after-commit event, gateway 401/503) has
       at least one automated test
-- [ ] Deliberately breaking things makes a test fail (checked by hand, then reverted):
+- [x] Deliberately breaking things makes a test fail (checked by hand, then reverted):
   - remove `@Transactional` → the rollback test fails
   - change the Kafka key → the key assertion fails
   - drop the gateway timeout → the 503 test fails
-- [ ] `Integration-tests` pass against the full compose stack
-- [ ] Total runtime noted per service, so we know the budget for CI
+- [x] `Integration-tests` pass against the full compose stack (9/9, freshly rebuilt images)
+- [x] Total runtime noted per service, so we know the budget for CI (README "Testing")
 
 ## Exercises (for you, after the phase)
 
@@ -209,4 +210,53 @@ how to run tests through Docker. Plus a row in `.claude/README.md`.
 
 ## What changed
 
-_Filled in at the end of the phase._
+| Step | Commit | Result |
+|---|---|---|
+| 1.0 | `7797aa0` | `.claude/settings.json` (permissions), Phase 0 skill `service-conventions`; `CLAUDE.md` phase workflow (`5c05738`) |
+| plan | `9303f88` | this file |
+| 1.1 | `70e5baf` | test dependencies in all POMs, `scripts/mvn-test.sh`; Testcontainers proven inside the maven container |
+| 1.2 | `75e73bf` | `contextLoads` runs in all 5 services (**B7 fixed**); gateway got its first test |
+| 1.3 | `66703d0` | 11 unit tests (service rules, mapper); Mockito as `-javaagent` in all POMs |
+| 1.4 | `b8863e3` | 15 `@WebMvcTest` tests: the HTTP contract of the patient API |
+| 1.5 | `76f014b` | 6 `@DataJpaTest` tests on real Postgres (unique constraint, Flyway, sort errors) |
+| 1.6 | `0032aa4` | 6 integration tests: rollback, after-commit Kafka event keyed by id, gRPC deadline, retry |
+| 1.7 | `d580bfa` | billing gRPC API over in-process transport |
+| 1.8 | `321f960` | analytics consumer on real Kafka; malformed message skipped; no PII |
+| 1.9 | `f6cd0f2` | 23 auth tests: JWT security cases, login rules, contract, real-DB login |
+| 1.10 | `4c7a6a2` | 8 gateway filter tests incl. 503 after timeout (B8) |
+| 1.11 | `1e4d77d` | E2E journeys (9 tests), Integration-tests on Java 21 / REST Assured 5.5.7 |
+| verify | `529de27` | flaky deadline fixed; mutation check (3 deliberate bugs, all caught) |
+| 1.12 | (this commit) | README "Testing", CLAUDE.md, roadmap |
+| 1.13 | (next commit) | skill `testing-conventions` |
+
+**Totals:** 77 tests in the services (patient 39, auth 23, gateway 9, billing 3, analytics 3) + 9 end-to-end.
+Runtime per service 25-80 s including Maven start and `clean`; all 5 together ~3.5 min.
+No production code (`src/main`) was changed in this phase.
+
+### Things learned while implementing (not in the plan)
+
+- **Stale `target/` files**: an old `target/classes/application.properties` (from before Phase 0) overrode
+  `application.yml` in auth tests (`sql.init.mode=always`). Maven never deletes outputs of removed sources →
+  the test script always runs `mvn clean test`.
+- **Mockito on Java 21** cannot self-attach its agent inside the container → loaded with `-javaagent` via
+  surefire `argLine` (with an empty `argLine` property so JaCoCo can add its agent in Phase 2).
+- **Boot 4 test slices are modular too**: `@WebMvcTest` needs `spring-boot-starter-webmvc-test`, security in
+  the slice needs `spring-boot-starter-security-test`, `WebTestClient` needs `spring-boot-starter-webflux-test`.
+- **Surefire ignores `*IT` classes** (they belong to Failsafe) → integration tests are named `*IntegrationTest`.
+- **Timing assertions** must allow for JVM warm-up: the first gRPC call in a cold JVM can take > 0.5 s.
+  Use a slow fake far above the deadline and a generous upper bound.
+
+### Findings (production code - not changed, needs a decision)
+
+| Finding | Where | Suggested fix |
+|---|---|---|
+| Gateway Problem Details `instance` is the **stripped** path (`/patients`), not the URI the client called (`/api/patients`), because `StripPrefix` runs before `JwtValidation` | `api-gateway` route filters / `JwtValidationGatewayFilterFactory.reject` | use the original request URL (`GATEWAY_ORIGINAL_REQUEST_URL_ATTR`) or put `JwtValidation` before `StripPrefix`; the test documents current behaviour |
+| `/validate` without `Authorization` header returns **400** (Spring's missing-header error) | `auth-service` `AuthController` | harmless today (gateway checks the header first, maps 4xx → 401); goes away with Auth0 in Phase 3 |
+| billing accepts an **empty request** and always returns account `12345` | `billing-service` `BillingGRPC` | billing is still a stub; validation + real accounts when billing gets a database |
+| A malformed Kafka message is logged and **lost** | `analytics-service` `KafkaConsumer` | dead-letter topic in Phase 4 |
+
+### Still open (planned)
+
+- Running the tests automatically on every push + coverage report → **Phase 2 (CI)**.
+- Security tests for Auth0 tokens / roles → **Phase 3**.
+- Outbox, retries, DLT tests → **Phase 4**.
