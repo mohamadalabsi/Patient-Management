@@ -60,8 +60,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(TestcontainersConfiguration.class)
 class PatientCreationFlowIntegrationTest {
 
-    /** Short deadline for tests, so the "too slow" case takes ~0.5 s, not the default 3 s. */
-    private static final Duration BILLING_DEADLINE = Duration.ofMillis(500);
+    /**
+     * Deadline used in the tests. PHASE 1 (step 1.12): 0.5 s -> 2 s. The FIRST gRPC call in a
+     * fresh JVM also opens the connection and loads classes; with 0.5 s it sometimes ran
+     * into the deadline although billing answered at once (flaky - found while
+     * mutation-testing the suite). 2 s is still far below the fake's 10 s "slow" answer.
+     */
+    // PHASE 1 (old): private static final Duration BILLING_DEADLINE = Duration.ofMillis(500);
+    private static final Duration BILLING_DEADLINE = Duration.ofSeconds(2);
 
     /**
      * Started ONCE, before Spring: its random port must be known when the context is created.
@@ -146,7 +152,7 @@ class PatientCreationFlowIntegrationTest {
 
     @Test
     void billingSlowerThanDeadlineFailsFastAndRollsBack() throws Exception {
-        BILLING.behave(FakeBillingServer.Mode.SLOW); // answers after 10 s, deadline is 0.5 s
+        BILLING.behave(FakeBillingServer.Mode.SLOW); // answers after 10 s, deadline is 2 s
         String email = uniqueEmail();
 
         long start = System.nanoTime();
@@ -159,7 +165,8 @@ class PatientCreationFlowIntegrationTest {
         // the first request in a fresh JVM also pays one-off warm-up costs (Hibernate,
         // gRPC connection, JIT) - a tight limit made this test fail when it ran first.
         // PHASE 1 (old): assertThat(took).isLessThan(Duration.ofMillis(1_500));
-        assertThat(took).isLessThan(Duration.ofSeconds(5));
+        // PHASE 1 (old, with 0.5 s deadline): assertThat(took).isLessThan(Duration.ofSeconds(5));
+        assertThat(took).isLessThan(Duration.ofSeconds(6));
         assertThat(patientRepo.existsByEmail(email)).isFalse();
         assertNoEventFor(email);
     }
