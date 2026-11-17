@@ -48,7 +48,7 @@ import static org.mockito.Mockito.when;
  *
  * What a unit test can NOT prove: that @Transactional really rolls back, or that the
  * event really reaches Kafka only after commit - that needs Spring + a real DB/Kafka
- * (PatientCreationFlowIT, step 1.6). Here we check the ORDER and the DECISIONS.
+ * (PatientCreationFlowIntegrationTest, step 1.6). Here we check the ORDER and the DECISIONS.
  *
  * Test structure: Given (prepare mocks) / When (call one method) / Then (assert).
  * @Nested groups tests by method, so the report reads like a specification.
