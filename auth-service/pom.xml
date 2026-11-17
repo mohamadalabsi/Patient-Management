@@ -115,9 +115,24 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!--
+            PHASE 1 (step 1.9): spring-security-test -> spring-boot-starter-security-test.
+            In Boot 4 the code that adds Spring Security to the @WebMvcTest slice lives in
+            the spring-boot-security-test module. With only the plain library, @WebMvcTest
+            started WITHOUT security infrastructure and SecurityConfig failed
+            ("No qualifying bean of type HttpSecurity"). The starter brings both the
+            slice support and spring-security-test.
+        -->
+        <!-- PHASE 1 (old):
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
