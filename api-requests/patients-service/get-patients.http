@@ -1,8 +1,26 @@
-### GET request to get all patients
+### PHASE 0 (step 0.10): fixed (audit B10) + pagination.
+# Run api-requests/auth-service/login.http first - it stores the token in {{token}}.
+#
+# The old file had a BLANK LINE between the request line and the Authorization
+# header. In the .http format a blank line ends the headers, so "Authorization: ..."
+# was sent as the request BODY and the gateway answered 401.
+#
+# PHASE 0 (old):
+# ###### GET request to get all patients
+#
+# #GET http://lb-8813ce00.elb.localhost.localstack.cloud:4004/api/patients
+# GET http://localhost:4004/api/patients
+#
+# Authorization: Bearer {{token}}
 
-#GET http://lb-8813ce00.elb.localhost.localstack.cloud:4004/api/patients
+### First page (defaults: page=0, size=20, sorted by name)
 GET http://localhost:4004/api/patients
-
 Authorization: Bearer {{token}}
 
-###
+### Explicit paging and sorting (size is capped at 100)
+GET http://localhost:4004/api/patients?page=0&size=5&sort=name,desc
+Authorization: Bearer {{token}}
+
+### Unknown sort field -> 400 Problem Details
+GET http://localhost:4004/api/patients?sort=password
+Authorization: Bearer {{token}}

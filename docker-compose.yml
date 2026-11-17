@@ -2,13 +2,46 @@ services:
   patient-service:
     container_name: patient-service
     image: patient-service
+    # PHASE 0 (step 0.3): build from the repo root so the Dockerfile can COPY the
+    # shared proto/ folder (Docker can't see files outside the build context).
+    # PHASE 0 (old):
+    #build:
+    #  context: ./patient-service
     build:
-      context: ./patient-service
+      context: .
+      dockerfile: patient-service/Dockerfile
+    # PHASE 0 (step 0.4): wait until dependencies are HEALTHY, not only STARTED.
+    # "service_started" only means the container exists - Kafka may still be booting,
+    # so the first producer calls failed/retried. billing is added because every
+    # patient creation calls it via gRPC.
+    # PHASE 0 (old):
+    #depends_on:
+    #  postgres:
+    #    condition: service_healthy
+    #  kafka:
+    #    condition: service_started
     depends_on:
       postgres:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
+      billing-service:
+        condition: service_healthy
+    # PHASE 0 (step 0.4): NEW healthcheck.
+    # Docker runs this command inside the container every 10s. The service counts as
+    # "healthy" only when Spring's readiness endpoint answers UP - i.e. the app has
+    # fully started (DB connected, beans created), not just "the JVM process exists".
+    # wget comes with the Alpine base image (busybox); curl is not installed there.
+    # start_period: grace time for Spring Boot startup before failures count.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # PHASE 0 (step 0.4): if the process crashes, Docker starts it again (unless you
+    # stopped it yourself). Kubernetes does the same automatically in Phase 7.
+    restart: unless-stopped
     networks:
       - application-network
     environment:
@@ -17,13 +50,32 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${PATIENT_DB_PASSWORD:?PATIENT_DB_PASSWORD is required}
       BILLING_SERVICE_ADDRESS: billing-service
       BILLING_SERVICE_PORT: 9001
+      # PHASE 0 (step 0.7): max time patient-service waits for a billing gRPC call
+      # (Spring Duration format: 3s, 500ms ...). Bound to billing.service.deadline.
+      BILLING_SERVICE_DEADLINE: 3s
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
 
   billing-service:
     container_name: billing-service
     image: billing-service
+    # PHASE 0 (step 0.3): build from the repo root so the Dockerfile can COPY the
+    # shared proto/ folder (Docker can't see files outside the build context).
+    # PHASE 0 (old):
+    #build:
+    #  context: ./billing-service
     build:
-      context: ./billing-service
+      context: .
+      dockerfile: billing-service/Dockerfile
+    # PHASE 0 (step 0.4): healthcheck on Spring's readiness endpoint (explained at patient-service).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4002/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # PHASE 0 (step 0.4): if the process crashes, Docker starts it again (unless you
+    # stopped it yourself). Kubernetes does the same automatically in Phase 7.
+    restart: unless-stopped
     networks:
       - application-network
     ports:
@@ -33,11 +85,31 @@ services:
   analytics-service:
     container_name: analytics-service
     image: analytics-service
+    # PHASE 0 (step 0.3): build from the repo root so the Dockerfile can COPY the
+    # shared proto/ folder (Docker can't see files outside the build context).
+    # PHASE 0 (old):
+    #build:
+    #  context: ./analytics-service
     build:
-      context: ./analytics-service
+      context: .
+      dockerfile: analytics-service/Dockerfile
+    # PHASE 0 (old):
+    #depends_on:
+    #  kafka:
+    #    condition: service_started
     depends_on:
       kafka:
-        condition: service_started
+        condition: service_healthy   # PHASE 0 (step 0.4): wait for a READY broker
+    # PHASE 0 (step 0.4): healthcheck on Spring's readiness endpoint (explained at patient-service).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4003/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # PHASE 0 (step 0.4): if the process crashes, Docker starts it again (unless you
+    # stopped it yourself). Kubernetes does the same automatically in Phase 7.
+    restart: unless-stopped
     networks:
       - application-network
     ports:
@@ -50,9 +122,28 @@ services:
     image: api-gateway
     build:
       context: ./api-gateway
+    # PHASE 0 (step 0.4): the short list form only waits for containers to START.
+    # The long form with "service_healthy" waits until both answer readiness = UP,
+    # so the gateway never routes to a service that is still booting.
+    # PHASE 0 (old):
+    #depends_on:
+    #  - patient-service
+    #  - auth-service
     depends_on:
-      - patient-service
-      - auth-service
+      patient-service:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    # PHASE 0 (step 0.4): healthcheck on Spring's readiness endpoint (explained at patient-service).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4004/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # PHASE 0 (step 0.4): if the process crashes, Docker starts it again (unless you
+    # stopped it yourself). Kubernetes does the same automatically in Phase 7.
+    restart: unless-stopped
     networks:
       - application-network
     ports:
@@ -69,6 +160,16 @@ services:
     depends_on:
       postgres-auth:
         condition: service_healthy
+    # PHASE 0 (step 0.4): healthcheck on Spring's readiness endpoint (explained at patient-service).
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4005/actuator/health/readiness || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    # PHASE 0 (step 0.4): if the process crashes, Docker starts it again (unless you
+    # stopped it yourself). Kubernetes does the same automatically in Phase 7.
+    restart: unless-stopped
     networks:
       - application-network
     environment:
@@ -76,6 +177,10 @@ services:
       SPRING_DATASOURCE_USERNAME: ${AUTH_DB_USER:?AUTH_DB_USER is required}
       SPRING_DATASOURCE_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      # PHASE 0 (step 0.5): LOCAL DEVELOPMENT ONLY - also load db/dev-data, which seeds
+      # the test user (testuser@test.com) used by Integration-tests and api-requests.
+      # A production deployment must not set this, so no known-password admin exists.
+      SPRING_FLYWAY_LOCATIONS: classpath:db/migration,classpath:db/dev-data
 
   postgres:
     container_name: patient-postgres
@@ -117,7 +222,13 @@ services:
 
   kafka:
     container_name: kafka-service
-    image: apache/kafka:latest
+    # PHASE 0 (step 0.2): pin an exact version instead of "latest".
+    # "latest" is a moving target: the same compose file can pull a different Kafka
+    # tomorrow (e.g. a new major version) and break the stack without any change in
+    # our repo. A pinned tag makes builds reproducible; upgrading becomes a
+    # deliberate, reviewable one-line change (later automated by Dependabot, Phase 2).
+    # PHASE 0 (old): image: apache/kafka:latest
+    image: apache/kafka:4.3.2
     ports:
       - "9092:9092"
       - "9094:9094"
@@ -133,6 +244,14 @@ services:
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    # PHASE 0 (step 0.4): NEW healthcheck. Asks the broker for its supported API
+    # versions - this only succeeds when the broker is really accepting clients.
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
     networks:
       - application-network
 

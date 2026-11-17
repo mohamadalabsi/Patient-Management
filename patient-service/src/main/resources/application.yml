@@ -8,16 +8,55 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
-      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
-    show-sql: ${SPRING_JPA_SHOW_SQL:true}
+      # PHASE 0 (step 0.5): update -> validate.
+      # Flyway now OWNS the schema. Hibernate only CHECKS at startup that the tables
+      # match the @Entity classes and refuses to start if they don't (e.g. you added
+      # a field but forgot the migration). It never changes the database anymore.
+      # PHASE 0 (old): ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:validate}
+    # PHASE 0 (step 0.9): true -> false by default. show-sql prints EVERY SQL
+    # statement to stdout (bypassing the logging system and its levels). Noisy and
+    # slow under load. Turn it on only while debugging: SPRING_JPA_SHOW_SQL=true
+    # PHASE 0 (old): show-sql: ${SPRING_JPA_SHOW_SQL:true}
+    show-sql: ${SPRING_JPA_SHOW_SQL:false}
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
   sql:
     init:
-      mode: ${SPRING_SQL_INIT_MODE:always}
+      # PHASE 0 (step 0.5): always -> never. Spring's simple schema.sql/data.sql
+      # mechanism is replaced by Flyway; running both would mean two tools
+      # fighting over the same tables.
+      # PHASE 0 (old): mode: ${SPRING_SQL_INIT_MODE:always}
+      mode: ${SPRING_SQL_INIT_MODE:never}
+  # PHASE 0 (step 0.5): Flyway settings.
+  flyway:
+    # Our databases already contain tables created by Hibernate, but no
+    # "flyway_schema_history" table. Flyway would refuse to touch such a
+    # non-empty, unknown database. baseline-on-migrate tells it: "record the
+    # current state as version 1 (baseline-version) and only run newer scripts".
+    # A brand-new, empty database ignores this and runs V1 normally.
+    baseline-on-migrate: true
+    baseline-version: 1
+  # PHASE 0 (step 0.6): limits for paginated endpoints (GET /patients).
+  # A client asking for ?size=100000 gets at most 100 rows - protects the DB and
+  # the service from accidental (or malicious) huge requests.
+  data:
+    web:
+      pageable:
+        max-page-size: 100
   kafka:
+    # PHASE 0 (step 0.7): now the ONLY place for Kafka settings (KafkaProducerConfig
+    # is disabled; Spring Boot builds the KafkaTemplate from these properties).
+    # Docker Compose overrides it with SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092.
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
+      # PHASE 0 (step 0.7): if the broker is unreachable, send() BLOCKS the calling
+      # thread while it waits for topic metadata - by default up to 60 seconds.
+      # Our send runs right after the HTTP request's commit, so the client would
+      # wait 60s. 5s is enough for a healthy broker and fails fast otherwise.
+      properties:
+        max.block.ms: 5000
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
 
@@ -27,3 +66,28 @@ server:
 logging:
   level:
     root: ${LOGGING_LEVEL_ROOT:info}
+
+# -----------------------------------------------------------------------------
+# PHASE 0 (step 0.4): Actuator / health checks.
+#
+# - Expose ONLY "health" and "info" over HTTP. Actuator has many endpoints
+#   (env, beans, heapdump ...) that leak internals; never expose them publicly.
+# - probes.enabled adds two special health groups:
+#     /actuator/health/liveness   -> "is the process alive?"   (if not: restart it)
+#     /actuator/health/readiness  -> "can it take traffic now?" (if not: don't send
+#                                     requests yet, e.g. still starting up)
+#   Docker Compose uses readiness in its healthcheck; Kubernetes (Phase 7) will
+#   use both as livenessProbe / readinessProbe.
+# - show-details: never -> the public response is only {"status":"UP"}; details
+#   (DB host, disk space ...) are not leaked.
+# -----------------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never

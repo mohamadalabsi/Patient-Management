@@ -1,1 +1,33 @@
+# ---------------------------------------------------------------------------
+# Root .gitignore
+#
+# PHASE 0 (step 0.1): before this phase the file only contained ".env".
+# Each service already has its own .gitignore, but folders that live directly
+# in the repo root (Integration-tests/, .idea/, docs/ ...) were not covered,
+# so compiled classes and IDE settings ended up in Git.
+#
+# Rule of thumb: commit SOURCE, never things that can be GENERATED
+# (build output, IDE caches, local secrets).
+# ---------------------------------------------------------------------------
+
+# Local secrets (DB passwords, JWT secret, later Auth0 credentials).
+# Never commit them; every developer / CI system provides its own.
 .env
+
+# Maven build output of ANY module (also Integration-tests/, which has no own .gitignore).
+# It is recreated by every "mvn package", so committing it only causes merge conflicts.
+target/
+
+# IntelliJ IDEA project files: personal editor settings, request logs, cookies.
+# They differ per machine and can contain tokens from the HTTP client.
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VS Code settings
+.vscode/
+
+# Operating-system junk files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,35 @@
+// -----------------------------------------------------------------------------
+// PHASE 0 (step 0.3): SINGLE SOURCE OF TRUTH for the billing gRPC contract.
+//
+// Before: identical copies lived in patient-service/src/main/proto and
+// billing-service/src/main/proto. A contract is an agreement between TWO sides
+// (client = patient-service, server = billing-service). With two copies, someone
+// can change one side only and the services silently disagree on the format.
+// Now both services compile THIS file (see <protoSourceRoot> in their pom.xml).
+//
+// Rules for changing it later (protobuf "schema evolution"):
+//   - never change or reuse a field NUMBER (= 1, = 2 ...) - numbers are what go on
+//     the wire, names are not;
+//   - add new fields with new numbers; old clients simply ignore them.
+// -----------------------------------------------------------------------------
+syntax = "proto3";
+
+// Generated Java classes go into the package "billing" (billing.BillingRequest ...).
+option java_multiple_files = true;
+option java_package = "billing";
+
+// The RPC patient-service calls when a new patient is created.
+service BillingService {
+  rpc CreateBillingAccount (BillingRequest) returns (BillingResponse);
+}
+
+message BillingRequest {
+  string patientId = 1;
+  string name = 2;
+  string email = 3;
+}
+
+message BillingResponse {
+  string accountId = 1;
+  string status = 2;
+}

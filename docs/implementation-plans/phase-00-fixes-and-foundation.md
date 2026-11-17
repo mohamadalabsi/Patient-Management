@@ -1,7 +1,7 @@
 # Phase 0 — Fixes & Foundation
 
-> Status: **planned — awaiting approval**
-> Branch: *(created by the owner before implementation starts)*
+> Status: **done** (2026-11-16)
+> Branch: `feature/phase-00-fixes-and-foundation`
 > Base: `dev-branch` @ `d669b5d`
 > Findings referenced (B#, S#, A#) are defined in [roadmap.md](roadmap.md#4-audit-findings).
 
@@ -164,4 +164,29 @@ Each step is small, compiles on its own and gets its own commit. I explain each 
 
 ## What changed
 
-*(filled in at the end of the phase)*
+Every step is one commit; each change is explained in the code with `PHASE 0 (step x.y)` comments and the replaced code is kept as `PHASE 0 (old)`.
+
+| Step | Commit | Result (verified against the running stack) |
+|---|---|---|
+| 0.1 Hygiene | `caaa7f1` | Root `.gitignore`; build output and `.idea/` untracked; dead `Main.java` and stray proto disabled |
+| 0.2 Versions | `a788818` | All services Boot 4.0.9; gateway Spring Cloud 2025.1.4 + `gateway-server-webflux` + `starter-webclient`; Kafka starter; springdoc 3.0.3; validation in auth (B6); `apache/kafka:4.3.2` |
+| 0.3 Contracts | `dd66a49` | Root `proto/` (single source); services compile with `<protoSourceRoot>` + `<includes>`; root build context + `.dockerignore`. gRPC + Kafka flow verified |
+| 0.4 Health | `ec5d4ae` | Actuator `health`/`info` only, liveness/readiness; compose healthchecks (incl. Kafka), `service_healthy`, `restart: unless-stopped`; `/actuator/env` → 404 |
+| 0.5 Flyway | `d28bc17` | V1 migrations matching the existing schemas; existing DBs baselined, fresh DBs migrated; `ddl-auto: validate`; test user only via `db/dev-data` (S5) — prod-like start has 0 users |
+| 0.6 API | `ef231af` | Problem Details; 404 / 409 / 400 (B4, B5); 10 parallel duplicate creates → 1×201 + 9×409, 1 row (B11); pagination, max 100 (A6); E2E assertion fixed (B9) |
+| 0.7 Create flow | `0994386` | Billing stopped/frozen → 503 after 3s deadline, 0 rows, no Kafka event; retry succeeds (B1 interim, B3); Kafka keyed by patient id, result logged (B2); duplicate Kafka Java configs disabled (A4) |
+| 0.8 Gateway | `5f8eb1d` | Auth-service down: **500 after 30s → 503 after 3s**; bad token 401; downstream 404 passes through (B8) |
+| 0.9 PII | `6facd8e` | No names/emails in any service log after a full smoke run (S7); `show-sql` off by default |
+| 0.10 Docs | *(this commit)* | README rewritten (no CDK), `.http` files fixed (B10), `CLAUDE.md` updated |
+
+### Corrections to the audit discovered while implementing
+- **B8** was partly wrong: an *invalid token* already returned 401. The real bug was worse than predicted: with auth-service *down*, clients waited **30 s** for a 500.
+- **Bad email** returned **500**, not just "no validation" (B5): the entity's `@Email` failed during the INSERT.
+- Boot 4's WebFlux starter no longer provides `WebClient.Builder` — the gateway needs `spring-boot-starter-webclient` (would have crashed at startup).
+- In Boot 4, plain `spring-kafka` has no auto-configuration — the reason the project needed hand-written Kafka config classes.
+
+### Still open (planned)
+- B7 `contextLoads` needs a real DB → Phase 1 (Testcontainers).
+- Event lost if Kafka send fails after commit; orphan billing account if commit fails after billing → Phase 4 (outbox).
+- `net.devh` gRPC server starter in billing → Spring gRPC in Phase 4.
+- Security S1–S4, S6, S8, S9 → Phase 3 (Auth0).

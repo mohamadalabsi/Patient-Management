@@ -1,261 +1,119 @@
 # Patient Management System
 
-A microservices-based healthcare patient management system built with Spring Boot, featuring JWT authentication, gRPC communication, event-driven architecture with Kafka, and cloud-ready infrastructure with AWS CDK/LocalStack.
+A microservices-based healthcare patient management system built with Spring Boot: an API gateway, JWT authentication, gRPC between services, event-driven messaging with Kafka and Protobuf, PostgreSQL with Flyway migrations, all running locally with Docker Compose.
+
+> 📍 **Roadmap & learning plan:** [`docs/implementation-plans/roadmap.md`](docs/implementation-plans/roadmap.md) — audit findings and the phased plan (testing, CI, Auth0, reliability, observability, Kubernetes, AWS). Each phase has its own plan file in the same folder.
 
 ## 📋 Table of Contents
 
-- [Architecture Overview](#architecture-overview)
-- [Services](#services)
-- [Technology Stack](#technology-stack)
-- [Prerequisites](#prerequisites)
-- [Getting Started](#getting-started)
-- [API Endpoints](#api-endpoints)
-- [Service Communication](#service-communication)
-- [Infrastructure](#infrastructure)
-- [Testing](#testing)
-- [Project Structure](#project-structure)
+- [Architecture](#-architecture)
+- [Services](#-services)
+- [Technology Stack](#-technology-stack)
+- [Getting Started](#-getting-started)
+- [API Endpoints](#-api-endpoints)
+- [Errors](#-errors)
+- [Service Communication](#-service-communication)
+- [Database & Migrations](#-database--migrations)
+- [Health Checks](#-health-checks)
+- [Testing](#-testing)
+- [Configuration](#-environment-variables-and-configuration)
+- [Project Structure](#-project-structure)
 
-## 🏗️ Architecture Overview
-
-This project supports two deployment modes: **Docker Compose** (local development) and **AWS/LocalStack** (cloud deployment).
-
-### Docker Compose Architecture (Local Development)
+## 🏗️ Architecture
 
 ```
-                                 ┌──────────────────┐
-                                 │    API Gateway   │
-                                 │   (Port: 4004)   │
-                                 └────────┬─────────┘
-                                          │ HTTP
-            ┌─────────────────────────────┼─────────────────────────────┐
-            │                             │                             │
-            ▼                             ▼                             │
-  ┌──────────────────┐         ┌──────────────────┐                     │
-  │   Auth Service   │         │  Patient Service │                     │
-  │   (Port: 4005)   │         │   (Port: 4000)   │                     │
-  └────────┬─────────┘         └───┬─────────┬────┘                     │
-           │                       │         │                          │
-           │                       │ gRPC    │ Kafka                    │
-           │                       ▼         ▼                          │
-           │              ┌────────────────────────────┐                │
-           │              │                            │                │
-           │    ┌─────────▼────────┐     ┌─────────────▼──────┐         │
-           │    │  Billing Service │     │  Analytics Service │         │
-           │    │ (Port: 4002/9001)│     │    (Port: 4003)    │         │
-           │    └──────────────────┘     └────────────────────┘         │
-           │                                                            │
-           ▼                             ▼                              │
-  ┌──────────────────┐         ┌──────────────────┐                     │
-  │     AuthDB       │         │    PatientDB     │                     │
-  │   (PostgreSQL)   │         │   (PostgreSQL)   │                     │
-  │   Port: 5001     │         │    Port: 5000    │                     │
-  └──────────────────┘         └──────────────────┘                     │
-                                                                        │
-                               ┌──────────────────┐                     │
-                               │   Apache Kafka   │◄────────────────────┘
-                               │  (Port: 9092)    │
-                               └──────────────────┘
+Client ─► api-gateway :4004 (Spring Cloud Gateway, reactive)
+            │  /auth/**          → auth-service :4005 ──► AuthDB (Postgres, host port 5001)
+            │  /api/patients/**  → JwtValidation filter ──GET /validate──► auth-service
+            │                     → patient-service :4000 ──► PatientDB (Postgres, host port 5000)
+            │                            ├─ gRPC (sync, 3s deadline) ─► billing-service :9001
+            │                            └─ Kafka topic "patient" (Protobuf, after DB commit) ─► analytics-service :4003
 ```
 
-### AWS/LocalStack Architecture (Cloud Deployment)
+Only the gateway (4004) is the intended entry point. patient-service and auth-service are not published to the host.
 
-```
-                                    ┌─────────────────────────────────────┐
-                                    │              AWS VPC                │
-                                    │       (PatientManagementVPC)        │
-                                    │            2 AZs                    │
-┌─────────┐                         │  ┌───────────────────────────────┐  │
-│         │    HTTP                 │  │    Application Load Balancer  │  │
-│ Client  │ ───────────────────────────►       (Public Subnet)         │  │
-│         │                         │  └──────────────┬────────────────┘  │
-└─────────┘                         │                 │                   │
-                                    │  ┌──────────────▼────────────────┐  │
-                                    │  │        ECS Cluster            │  │
-                                    │  │   (patient-management.local)  │  │
-                                    │  │                               │  │
-                                    │  │  ┌─────────────────────────┐  │  │
-                                    │  │  │   API Gateway (Fargate) │  │  │
-                                    │  │  │       Port: 4004        │  │  │
-                                    │  │  └───────────┬─────────────┘  │  │
-                                    │  │              │                │  │
-                                    │  │   ┌─────────┴─────────┐       │  │
-                                    │  │   │                   │       │  │
-                                    │  │   ▼                   ▼       │  │
-                                    │  │ ┌───────────┐ ┌─────────────┐ │  │
-                                    │  │ │Auth Svc   │ │Patient Svc  │ │  │
-                                    │  │ │(Fargate)  │ │(Fargate)    │ │  │
-                                    │  │ │Port: 4005 │ │Port: 4000   │ │  │
-                                    │  │ └─────┬─────┘ └──┬─────┬────┘ │  │
-                                    │  │       │          │     │      │  │
-                                    │  │       │    gRPC  │     │Kafka │  │
-                                    │  │       │          ▼     │      │  │
-                                    │  │       │  ┌────────────┐│      │  │
-                                    │  │       │  │Billing Svc ││      │  │
-                                    │  │       │  │(Fargate)   ││      │  │
-                                    │  │       │  │Port: 9001  ││      │  │
-                                    │  │       │  └────────────┘│      │  │
-                                    │  │       │                │      │  │
-                                    │  │       │         ┌──────▼────┐ │  │
-                                    │  │       │         │Analytics  │ │  │
-                                    │  │       │         │Svc        │ │  │
-                                    │  │       │         │(Fargate)  │ │  │
-                                    │  │       │         │Port: 4003 │ │  │
-                                    │  │       │         └───────────┘ │  │
-                                    │  └───────┼───────────────────────┘  │
-                                    │          │                          │
-                                    │  ┌───────▼───────┐  ┌────────────┐  │
-                                    │  │ RDS PostgreSQL│  │ MSK Kafka  │  │
-                                    │  │ (AuthDB)      │  │ Cluster    │  │
-                                    │  │               │  │ (2 Brokers)│  │
-                                    │  ├───────────────┤  │            │  │
-                                    │  │ RDS PostgreSQL│  │            │  │
-                                    │  │ (PatientDB)   │  │            │  │
-                                    │  └───────────────┘  └────────────┘  │
-                                    │                                     │
-                                    └─────────────────────────────────────┘
-```
-
-### AWS/LocalStack Components
-
-| Component | AWS Service | Description |
-|-----------|-------------|-------------|
-| **VPC** | Amazon VPC | Isolated network with 2 Availability Zones |
-| **Load Balancer** | Application Load Balancer | Entry point for all traffic |
-| **Microservices** | ECS Fargate | Serverless containers (256 CPU, 512MB RAM) |
-| **Databases** | RDS PostgreSQL 16.3 | Managed databases with auto-generated secrets |
-| **Message Broker** | MSK (Kafka 3.5.1) | Managed Kafka with 2 broker nodes |
-| **Service Discovery** | Cloud Map | Internal DNS (*.patient-management.local) |
-| **Logging** | CloudWatch Logs | Centralized logging for all services |
-
-### Flow Description
-1. **Client** sends requests to **Application Load Balancer** (or API Gateway on port 4004 for Docker)
-2. **API Gateway** validates JWT tokens with **Auth Service** and routes requests
-3. **Patient Service** handles patient CRUD operations and stores data in **PatientDB** (RDS)
-4. When a patient is created, **Patient Service**:
-   - Calls **Billing Service** via **gRPC** to create a billing account
-   - Publishes a patient event to **MSK Kafka** (or Apache Kafka for Docker)
-5. **Analytics Service** consumes patient events from **Kafka** for processing
+> The former AWS CDK / LocalStack setup was removed on purpose. Cloud deployment comes back later with Terraform (roadmap phase 8).
 
 ## 🔧 Services
 
-### API Gateway (Port 4004)
-- Routes incoming requests to appropriate microservices
-- Handles authentication token validation via Auth Service
-- Built with Spring Cloud Gateway
-
-### Auth Service (Port 4005)
-- User authentication and authorization
-- JWT token generation and validation
-- User management with Spring Security
-- PostgreSQL database for user storage
-
-### Patient Service (Port 4000)
-- Core patient CRUD operations
-- gRPC client for Billing Service communication
-- Kafka producer for event publishing
-- PostgreSQL database for patient data
-
-### Billing Service (Port 4002, gRPC: 9001)
-- Billing account management
-- gRPC server for inter-service communication
-- Creates billing accounts when patients are registered
-
-### Analytics Service (Port 4003)
-- Consumes patient events via Kafka
-- Processes and analyzes patient data
-- Event-driven architecture with Protobuf serialization
+| Service | Port | Responsibility |
+|---|---|---|
+| **api-gateway** | 4004 | Routing; validates the token via auth-service for `/api/patients/**` (401 invalid token, 503 auth-service unavailable) |
+| **auth-service** | 4005 | Login, issues HS256 JWTs, `GET /validate` |
+| **patient-service** | 4000 | Patient CRUD, gRPC client of billing, Kafka producer |
+| **billing-service** | 4002 (HTTP), 9001 (gRPC) | gRPC server `CreateBillingAccount` (currently a stub) |
+| **analytics-service** | 4003 | Kafka consumer of patient events (currently logs them) |
 
 ## 🛠️ Technology Stack
 
 | Category | Technology |
-|----------|------------|
-| **Language** | Java 21 |
-| **Framework** | Spring Boot 4.x |
-| **API Gateway** | Spring Cloud Gateway |
-| **Security** | Spring Security, JWT (jjwt 0.12.6) |
-| **Database** | PostgreSQL 16 |
-| **ORM** | Spring Data JPA |
-| **Messaging** | Apache Kafka |
-| **RPC** | gRPC with Protobuf |
-| **Build Tool** | Maven |
-| **Containerization** | Docker, Docker Compose |
-| **Cloud Infrastructure** | AWS CDK, LocalStack |
-| **Testing** | JUnit 6, REST Assured |
-
-## 📦 Prerequisites
-
-- **Java 21** or higher
-- **Docker** and **Docker Compose**
-- **Maven 3.8+**
-- **LocalStack** (for local AWS infrastructure testing)
+|---|---|
+| Language | Java 21 |
+| Framework | Spring Boot **4.0.9** (all services) |
+| API Gateway | Spring Cloud Gateway 5 (Spring Cloud 2025.1, WebFlux) |
+| Security | Spring Security, jjwt 0.12.6 (Auth0 planned — roadmap phase 3) |
+| Database | PostgreSQL 16, Spring Data JPA, **Flyway** migrations |
+| Messaging | Apache Kafka 4.3.2 (KRaft), Protobuf payloads |
+| RPC | gRPC + Protobuf (contracts in root `proto/`) |
+| Errors | RFC 9457 Problem Details |
+| Ops | Spring Boot Actuator health probes |
+| Build / Run | Maven, Docker, Docker Compose |
+| Testing | JUnit, REST Assured |
 
 ## 🚀 Getting Started
 
-### 1. Clone the Repository
+**Prerequisites:** Docker Desktop (with Compose). A local JDK/Maven is optional — every image is built from source inside Docker.
+
+1. Create a root `.env` file (see [Configuration](#-environment-variables-and-configuration)).
+2. Start everything:
+   ```bash
+   docker compose up --build
+   ```
+3. Wait until all containers are **healthy**:
+   ```bash
+   docker compose ps
+   ```
+   Services start in dependency order (`depends_on: service_healthy`): databases and Kafka → billing/auth → patient → gateway.
+
+Useful commands:
 
 ```bash
-git clone <repository-url>
-cd Patient-Management-Final
-```
-
-### 2. Build All Services
-
-```bash
-# Build each service
-cd patient-service && ./mvnw clean package -DskipTests && cd ..
-cd auth-service && ./mvnw clean package -DskipTests && cd ..
-cd billing-service && ./mvnw clean package -DskipTests && cd ..
-cd analytics-service && ./mvnw clean package -DskipTests && cd ..
-cd api-gateway && ./mvnw clean package -DskipTests && cd ..
-```
-
-### 3. Start All Services with Docker Compose
-
-```bash
-docker-compose up --build
-```
-
-This will start:
-- PostgreSQL databases (PatientDB on port 5000, AuthDB on port 5001)
-- Apache Kafka (ports 9092, 9094)
-- All microservices
-
-### 4. Verify Services are Running
-
-```bash
-docker ps
+docker compose up --build patient-service   # rebuild and restart one service
+docker compose logs -f patient-service      # follow logs
+docker compose down                         # stop (keeps database data)
+docker compose down -v                      # stop AND delete database volumes
 ```
 
 ## 📡 API Endpoints
 
-All API requests go through the **API Gateway** at `http://localhost:4004`
+All requests go through the gateway at `http://localhost:4004`. Ready-made requests are in [`api-requests/`](api-requests) (IntelliJ HTTP client).
 
 ### Authentication
 
-#### Login
 ```http
-POST http://localhost:4004/auth/login
+POST /auth/login
 Content-Type: application/json
 
-{
-    "email": "testuser@test.com",
-    "password": "password123"
-}
+{ "email": "testuser@test.com", "password": "password123" }
 ```
+→ `200 {"token": "..."}`. The test user exists **only in local development** (see [Database & Migrations](#-database--migrations)).
 
-#### Validate Token
 ```http
-GET http://localhost:4004/auth/validate
+GET /auth/validate
 Authorization: Bearer <token>
 ```
 
-### Patient Management
+### Patients (require `Authorization: Bearer <token>`)
 
-#### Create Patient
-```http
-POST http://localhost:4004/api/patients
-Content-Type: application/json
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/patients?page=0&size=20&sort=name,asc` | Paginated; defaults page 0, size 20, sort by name; max size 100 |
+| `POST` | `/api/patients` | `201`; also creates a billing account (gRPC) and publishes a Kafka event |
+| `PUT` | `/api/patients/{id}` | `200`; `registrationDate` not required |
+| `DELETE` | `/api/patients/{id}` | `204` |
 
+Create body (dates are `yyyy-MM-dd`; `birthDate` must be in the past):
+```json
 {
   "name": "John Doe",
   "email": "john.doe@example.com",
@@ -265,171 +123,95 @@ Content-Type: application/json
 }
 ```
 
-#### Get All Patients
-```http
-GET http://localhost:4004/api/patients
-Authorization: Bearer <token>
-```
-
-#### Update Patient
-```http
-PUT http://localhost:4004/api/patients/{id}
-Content-Type: application/json
-Authorization: Bearer <token>
-
+Paginated response:
+```json
 {
-  "name": "John Doe Updated",
-  "email": "john.updated@example.com",
-  "address": "456 New St, Frankfurt, Germany"
+  "content": [ { "id": "…", "name": "John Doe", "email": "…", "address": "…", "birthDate": "1990-01-15" } ],
+  "page": { "size": 20, "number": 0, "totalElements": 1, "totalPages": 1 }
 }
 ```
 
-### Billing (gRPC)
+### API docs (OpenAPI)
+- `GET /api-docs/patients`
+- `GET /api-docs/auth`
 
-#### Create Billing Account
+### Billing (gRPC, direct)
 ```http
 GRPC localhost:9001/BillingService/CreateBillingAccount
 
-{
-  "patientId": "12345",
-  "name": "John Doe",
-  "email": "john@example.com"
-}
+{ "patientId": "12345", "name": "John Doe", "email": "john@example.com" }
 ```
+
+## ❗ Errors
+
+Errors use **RFC 9457 Problem Details** (`application/problem+json`):
+
+```json
+{ "type": "about:blank", "title": "Conflict", "status": 409,
+  "detail": "A patient with this email already exists", "instance": "/patients" }
+```
+
+| Status | When |
+|---|---|
+| 400 | Validation failed (with an `errors` map per field), malformed JSON / invalid date, unknown sort field, invalid UUID |
+| 401 | Missing, invalid or expired token |
+| 404 | Patient not found |
+| 409 | Email already used (also under concurrent requests) |
+| 503 | billing-service or auth-service unavailable / too slow — nothing was saved, retry later |
 
 ## 🔄 Service Communication
 
-### REST (HTTP)
-- Client → API Gateway → Auth Service (authentication)
-- Client → API Gateway → Patient Service (patient operations)
+- **REST:** client → gateway → auth-service / patient-service.
+- **gRPC:** patient-service → billing-service with a **deadline** (`BILLING_SERVICE_DEADLINE`, default `3s`). Patient creation is one DB transaction: if billing fails, the patient insert is rolled back and the API answers 503.
+- **Kafka:** after the DB transaction **commits**, patient-service publishes `PatientEvent` (Protobuf) to topic `patient`, keyed by patient id (per-patient ordering). analytics-service consumes it (group `analytics-service`).
+- **Contracts:** one copy of each `.proto` in [`proto/`](proto). Services compile them via `<protoSourceRoot>../proto</protoSourceRoot>`, which is why the patient/billing/analytics images are built with the repo root as Docker build context.
 
-### gRPC
-- Patient Service → Billing Service (billing account creation)
-- Uses Protocol Buffers for efficient serialization
+Logs contain **IDs only** — no patient names or emails.
 
-### Kafka (Event-Driven)
-- Patient Service → Kafka → Analytics Service
-- Events are published when patients are created/updated
-- Uses Protobuf for message serialization
+## 🗃️ Database & Migrations
 
-## ☁️ Infrastructure
+| DB | Container | Host port | Owner |
+|---|---|---|---|
+| PatientDB | `patient-postgres` | 5000 | patient-service |
+| AuthDB | `auth-postgres` | 5001 | auth-service |
 
-The project uses **AWS CDK** to define infrastructure as code, deployable to **LocalStack** for local testing or **AWS** for production.
+The schema is managed by **Flyway** (`src/main/resources/db/migration/V*.sql`); Hibernate only validates it (`ddl-auto: validate`).
 
-### AWS Resources Created
+- To change the schema, **add** a new migration (`V2__...sql`) — never edit one that already ran.
+- Existing databases created by older versions are baselined automatically (`baseline-on-migrate`).
+- The test user `testuser@test.com` lives in `auth-service/src/main/resources/db/dev-data/` and is loaded **only** because `docker-compose.yml` sets `SPRING_FLYWAY_LOCATIONS=classpath:db/migration,classpath:db/dev-data`. Production must not set it.
 
-| Resource | Type | Details |
-|----------|------|---------|
-| **PatientManagementVPC** | VPC | 2 Availability Zones, public/private subnets |
-| **EcsCluster** | ECS Cluster | With Cloud Map namespace `patient-management.local` |
-| **API Gateway** | ECS Fargate + ALB | 256 CPU, 512MB, with Application Load Balancer |
-| **Auth Service** | ECS Fargate | 256 CPU, 512MB, depends on AuthDB |
-| **Patient Service** | ECS Fargate | 256 CPU, 512MB, depends on PatientDB, Billing, MSK |
-| **Billing Service** | ECS Fargate | 256 CPU, 512MB, gRPC on port 9001 |
-| **Analytics Service** | ECS Fargate | 256 CPU, 512MB, depends on MSK |
-| **AuthServiceDB** | RDS PostgreSQL 16.3 | t2.micro, 20GB storage |
-| **PatientServiceDB** | RDS PostgreSQL 16.3 | t2.micro, 20GB storage |
-| **MskCluster** | MSK Kafka 3.5.1 | 2 broker nodes (kafka.m5.large) |
+Database credentials come from `.env` and are applied when a volume is first created. After changing them run `docker compose down -v` (deletes local data).
 
-### LocalStack Deployment
+## ❤️ Health Checks
 
-```bash
-# 1. Start LocalStack
-docker run -d --name localstack -p 4566:4566 localstack/localstack
+Every service exposes Actuator (only `health` and `info`):
 
-# 2. Build all Docker images
-docker-compose build
-
-# 3. Generate CloudFormation template
-cd infrastructure
-mvn compile exec:java
-
-# 4. Deploy to LocalStack
-./localstack-deploy.sh
-
-# 5. Get the Load Balancer DNS
-aws --endpoint-url=http://localhost:4566 elbv2 describe-load-balancers \
-    --query "LoadBalancers[0].DNSName" --output text
+```
+/actuator/health            {"status":"UP"}
+/actuator/health/liveness   process alive?
+/actuator/health/readiness  ready for traffic? (used by docker compose healthchecks)
 ```
 
-### Access via LocalStack
-After deployment, access the API through the Load Balancer DNS:
-```
-http://lb-XXXXXXXX.elb.localhost.localstack.cloud:4004/api/patients
-```
-
-### AWS Production Deployment
-
-```bash
-# 1. Configure AWS credentials
-aws configure
-
-# 2. Bootstrap CDK (first time only)
-cdk bootstrap
-
-# 3. Deploy to AWS
-cd infrastructure
-cdk deploy
-```
+The gateway's is reachable at `http://localhost:4004/actuator/health`.
 
 ## 🧪 Testing
 
-### Unit Tests
+End-to-end tests (REST Assured) run against the running stack on `localhost:4004`:
 
 ```bash
-# Run tests for individual services
-cd patient-service && ./mvnw test
-cd auth-service && ./mvnw test
-cd billing-service && ./mvnw test
-cd analytics-service && ./mvnw test
+docker compose up -d --build
+cd Integration-tests && mvn test
+# without a local Maven:
+docker run --rm --network host -v "$PWD/Integration-tests":/ws -v pm-m2-cache:/root/.m2 -w /ws \
+  maven:3.9.9-eclipse-temurin-21 mvn -B test
 ```
 
-### Integration Tests
-
-```bash
-cd Integration-tests
-mvn test
-```
-
-Integration tests use:
-- **REST Assured** for API testing
-- **JUnit 6** for test execution
-
-### HTTP Request Files
-
-The project includes `.http` files for testing APIs:
-- `api-requests/auth-service/` - Authentication requests
-- `api-requests/patients-service/` - Patient CRUD requests
-- `grpc-requests/billing-service/` - gRPC billing requests
-
-## 📁 Project Structure
-
-```
-Patient-Management-Final/
-├── api-gateway/              # Spring Cloud Gateway
-├── auth-service/             # Authentication microservice
-├── patient-service/          # Patient management microservice
-├── billing-service/          # Billing microservice (gRPC server)
-├── analytics-service/        # Analytics microservice (Kafka consumer)
-├── infrastructure/           # AWS CDK/LocalStack templates
-├── Integration-tests/        # End-to-end integration tests
-├── api-requests/             # HTTP request files for testing
-│   ├── auth-service/
-│   └── patients-service/
-├── grpc-requests/            # gRPC request files for testing
-│   └── billing-service/
-└── docker-compose.yml        # Docker Compose configuration
-```
+Unit/integration tests per service (Testcontainers) are planned in roadmap phase 1.
 
 ## 🔐 Environment Variables and Configuration
 
-Each service keeps its own `application.yml`. These files
-contain service-specific behavior and safe defaults for running a service directly.
-They do not contain passwords or JWT signing keys.
-
-For local Docker Compose development, create your own root `.env` file. Docker Compose
-reads it for variable substitution and passes only the relevant values to each service.
-Choose your own database names, usernames, passwords, and JWT secret:
+Each service's `application.yml` holds non-secret defaults (`${ENV:default}`). Secrets come only from a root `.env` (ignored by Git), which `docker-compose.yml` requires (`${VAR:?}` — Compose fails fast if one is missing):
 
 ```dotenv
 PATIENT_DB_NAME=your_patient_database
@@ -440,68 +222,37 @@ AUTH_DB_NAME=your_auth_database
 AUTH_DB_USER=your_auth_database_user
 AUTH_DB_PASSWORD=your_auth_database_password
 
-JWT_SECRET=your_long_random_jwt_secret
+JWT_SECRET=your_base64_encoded_secret_of_at_least_32_bytes
 ```
 
-Then start the application:
+Non-secret values set by Compose:
 
-```bash
-docker compose up --build
+| Variable | Service | Value |
+|---|---|---|
+| `BILLING_SERVICE_ADDRESS` / `_PORT` | patient | `billing-service` / `9001` |
+| `BILLING_SERVICE_DEADLINE` | patient | `3s` |
+| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | patient, analytics | `kafka:9092` |
+| `SPRING_FLYWAY_LOCATIONS` | auth | includes `db/dev-data` (local only) |
+| `AUTH_SERVICE_URL` / `PATIENT_SERVICE_URL` | gateway | `http://auth-service:4005` / `http://patient-service:4000` |
+| `AUTH_SERVICE_TIMEOUT` | gateway | default `3s` |
+
+## 📁 Project Structure
+
 ```
-
-`.env` is ignored by Git and must not be committed. The variables required in it are:
-
-| Variable | Used by | Description |
-|----------|---------|-------------|
-| `PATIENT_DB_NAME` | PostgreSQL and patient service | Patient database name |
-| `PATIENT_DB_USER` | PostgreSQL and patient service | Patient database user |
-| `PATIENT_DB_PASSWORD` | PostgreSQL and patient service | Patient database password |
-| `AUTH_DB_NAME` | PostgreSQL and auth service | Auth database name |
-| `AUTH_DB_USER` | PostgreSQL and auth service | Auth database user |
-| `AUTH_DB_PASSWORD` | PostgreSQL and auth service | Auth database password |
-| `JWT_SECRET` | Auth service | JWT signing key |
-
-Compose also supplies non-secret Docker network addresses:
-
-| Variable | Service | Value in Compose |
-|----------|---------|------------------|
-| `BILLING_SERVICE_ADDRESS` | Patient | `billing-service` |
-| `BILLING_SERVICE_PORT` | Patient | `9001` |
-| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Patient, analytics | `kafka:9092` |
-| `AUTH_SERVICE_URL` | API gateway | `http://auth-service:4005` |
-| `PATIENT_SERVICE_URL` | API gateway | `http://patient-service:4000` |
-
-For staging or production, inject these values through the deployment platform
-(for example AWS Secrets Manager/ECS task-definition secrets, Kubernetes Secrets, or
-Vault) instead of committing or distributing a production `.env` file.
-
-## 🗃️ Database Configuration
-
-Docker Compose creates two PostgreSQL databases using the values you choose in `.env`:
-
-### Patient Database
-- **Container**: `patient-postgres`
-- **Port**: `5000` (mapped to internal `5432`)
-- **Database, user, and password**: configured with `PATIENT_DB_NAME`, `PATIENT_DB_USER`, and `PATIENT_DB_PASSWORD`
-
-### Auth Database
-- **Container**: `auth-postgres`
-- **Port**: `5001` (mapped to internal `5432`)
-- **Database, user, and password**: configured with `AUTH_DB_NAME`, `AUTH_DB_USER`, and `AUTH_DB_PASSWORD`
-
-The database values are applied when each PostgreSQL data volume is initialized. If you
-change them after the containers have already been started, recreate the volumes with
-`docker compose down -v` before running `docker compose up --build` again. This removes
-the existing local database data.
+Patient-Management/
+├── api-gateway/          # Spring Cloud Gateway (WebFlux)
+├── auth-service/         # Login + JWT (Flyway: db/migration, db/dev-data)
+├── patient-service/      # Patient CRUD, gRPC client, Kafka producer (Flyway)
+├── billing-service/      # gRPC server
+├── analytics-service/    # Kafka consumer
+├── proto/                # Shared gRPC + Kafka Protobuf contracts
+├── Integration-tests/    # REST Assured end-to-end tests
+├── api-requests/         # IntelliJ .http requests
+├── grpc-requests/        # IntelliJ gRPC requests
+├── docs/implementation-plans/  # Roadmap and per-phase plans
+└── docker-compose.yml
+```
 
 ## 📝 License
 
 This project is licensed under the MIT License.
-
-## 👥 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request

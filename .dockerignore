@@ -1,0 +1,18 @@
+# -----------------------------------------------------------------------------
+# PHASE 0 (step 0.3): NEW.
+# patient/billing/analytics images are now built with the repo root as build
+# context (to reach proto/). Docker uploads the WHOLE context to the builder
+# before building, so we exclude everything a build never needs: build output,
+# Git history, IDE files, docs and local secrets. Smaller context = faster
+# builds, and .env can never accidentally end up inside an image.
+# -----------------------------------------------------------------------------
+**/target/
+.git/
+.idea/
+**/*.iml
+docs/
+api-requests/
+grpc-requests/
+Integration-tests/
+.env
+**/.mvn/wrapper/maven-wrapper.jar

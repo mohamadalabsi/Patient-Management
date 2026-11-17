@@ -1,42 +1,89 @@
 server:
   port: ${SERVER_PORT:4004}
 
+# -----------------------------------------------------------------------------
+# PHASE 0 (step 0.2): ONLY the property prefix was renamed here, nothing else.
+#   old: spring.cloud.gateway.routes   ->   new: spring.cloud.gateway.server.webflux.routes
+# (Gateway 5.x ignores the old prefix; see application.yml for the full reason.)
+# This "prod" profile was written for the removed AWS/CDK deployment and is
+# currently unused; it will be revisited in Phase 8 (AWS + Terraform).
+# -----------------------------------------------------------------------------
+
+# PHASE 0 (old):
+#spring:
+#  cloud:
+#    gateway:
+#      routes:
+#        - id: auth-service-route
+#          uri: ${AUTH_SERVICE_URL}
+#          predicates:
+#            - Path=/auth/**
+#          filters:
+#            - StripPrefix=1
+#
+#        - id: patient-service-route
+#          uri: ${PATIENT_SERVICE_URL}
+#          predicates:
+#            - Path=/api/patients/**
+#          filters:
+#            - StripPrefix=1
+#            - JwtValidation
+#
+#        - id: api-docs-patient-route
+#          uri: ${PATIENT_SERVICE_URL}
+#          predicates:
+#            - Path=/api-docs/patients
+#          filters:
+#            - RewritePath=/api-docs/patients,/v3/api-docs
+#
+#        - id: api-docs-auth-route
+#          uri: ${AUTH_SERVICE_URL}
+#          predicates:
+#            - Path=/api-docs/auth
+#          filters:
+#            - RewritePath=/api-docs/auth,/v3/api-docs
+
 spring:
   cloud:
     gateway:
-      routes:
-        - id: auth-service-route
-          uri: ${AUTH_SERVICE_URL}
-          predicates:
-            - Path=/auth/**
-          filters:
-            - StripPrefix=1
+      server:
+        webflux:
+          routes:
+            - id: auth-service-route
+              uri: ${AUTH_SERVICE_URL}
+              predicates:
+                - Path=/auth/**
+              filters:
+                - StripPrefix=1
 
-        - id: patient-service-route
-          uri: ${PATIENT_SERVICE_URL}
-          predicates:
-            - Path=/api/patients/**
-          filters:
-            - StripPrefix=1
-            - JwtValidation
+            - id: patient-service-route
+              uri: ${PATIENT_SERVICE_URL}
+              predicates:
+                - Path=/api/patients/**
+              filters:
+                - StripPrefix=1
+                - JwtValidation
 
-        - id: api-docs-patient-route
-          uri: ${PATIENT_SERVICE_URL}
-          predicates:
-            - Path=/api-docs/patients
-          filters:
-            - RewritePath=/api-docs/patients,/v3/api-docs
+            - id: api-docs-patient-route
+              uri: ${PATIENT_SERVICE_URL}
+              predicates:
+                - Path=/api-docs/patients
+              filters:
+                - RewritePath=/api-docs/patients,/v3/api-docs
 
-        - id: api-docs-auth-route
-          uri: ${AUTH_SERVICE_URL}
-          predicates:
-            - Path=/api-docs/auth
-          filters:
-            - RewritePath=/api-docs/auth,/v3/api-docs
+            - id: api-docs-auth-route
+              uri: ${AUTH_SERVICE_URL}
+              predicates:
+                - Path=/api-docs/auth
+              filters:
+                - RewritePath=/api-docs/auth,/v3/api-docs
 
 auth:
   service:
     url: ${AUTH_SERVICE_URL}
+    # PHASE 0 (step 0.8): NEW - max wait for auth-service /validate. Without it a
+    # down auth-service made clients wait ~30s (TCP connect timeout) and get 500.
+    timeout: ${AUTH_SERVICE_TIMEOUT:3s}
 
 logging:
   level:

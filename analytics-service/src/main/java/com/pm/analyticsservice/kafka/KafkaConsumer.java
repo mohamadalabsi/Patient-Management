@@ -18,8 +18,17 @@ public class KafkaConsumer {
     public void consumeEvent(byte[] event) {
         try {
             PatientEvent patientEvent = PatientEvent.parseFrom(event);
-            log.info("Received Patient Event : PatientId={} , PatientName={}, PatientEmail={}",
-                    patientEvent.getPatientId(), patientEvent.getName(), patientEvent.getEmail());
+            // PHASE 0 (step 0.9): no personal data (PII) in logs (audit S7).
+            // Logs are copied to many places (log files, log servers like Loki in Phase 5,
+            // support tickets, screenshots) and are kept for a long time. For health data
+            // (GDPR "special category") name + email of a patient must not end up there.
+            // We log only technical IDs; the full record stays in the database, where
+            // access is controlled.
+            // PHASE 0 (old):
+            // log.info("Received Patient Event : PatientId={} , PatientName={}, PatientEmail={}",
+            //         patientEvent.getPatientId(), patientEvent.getName(), patientEvent.getEmail());
+            log.info("Received patient event: type={}, patientId={}",
+                    patientEvent.getEventType(), patientEvent.getPatientId());
         } catch (InvalidProtocolBufferException e) {
             log.error("Error deserializing event: {}", e.getMessage());
         }

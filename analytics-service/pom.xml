@@ -6,7 +6,12 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.2</version>
+        <!--
+            PHASE 0 (step 0.2): 4.0.2 -> 4.0.9 - same Boot version in every service
+            (the parent is a BOM that fixes all Spring library versions; see patient-service/pom.xml).
+        -->
+        <!-- PHASE 0 (old): <version>4.0.2</version> -->
+        <version>4.0.9</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.pm</groupId>
@@ -31,10 +36,35 @@
         <java.version>21</java.version>
     </properties>
     <dependencies>
+        <!--
+            PHASE 0 (step 0.4): NEW - Spring Boot Actuator.
+            Adds production endpoints under /actuator, most importantly
+            /actuator/health. Docker (now) and Kubernetes (Phase 7) call it to ask
+            "is this service really ready?" instead of only "is the process running?".
+            In Phase 5 the same library exposes metrics for Prometheus.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!--
+            PHASE 0 (step 0.2): plain spring-kafka 3.3.0 -> spring-boot-starter-kafka
+            - 3.3.0 is the Boot-3 generation; Boot 4 expects Spring Kafka 4.x.
+            - In Boot 4 Kafka auto-configuration (ConsumerFactory, listener container
+              factory built from application.yml) only comes with the starter. That is
+              why this service needed its own hand-written KafkaConfig class.
+            No <version>: the Boot BOM picks the matching one.
+        -->
+        <!-- PHASE 0 (old):
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
             <version>3.3.0</version>
+        </dependency>
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka</artifactId>
         </dependency>
         <dependency>
             <groupId>com.google.protobuf</groupId>
@@ -79,6 +109,16 @@
                 <artifactId>protobuf-maven-plugin</artifactId>
                 <version>0.6.1</version>
                 <configuration>
+                    <!--
+                        PHASE 0 (step 0.3): read .proto files from the SHARED root folder
+                        ../proto instead of this service's own src/main/proto.
+                        <includes> limits which contracts this service compiles:
+                        analytics-service only consumes Kafka events, so it needs only the event contract.
+                    -->
+                    <protoSourceRoot>${project.basedir}/../proto</protoSourceRoot>
+                    <includes>
+                        <include>patient_event.proto</include>
+                    </includes>
                     <!--suppress UnresolvedMavenProperty -->
                     <protocArtifact>com.google.protobuf:protoc:3.25.5:exe:${os.detected.classifier}</protocArtifact>
                     <pluginId>grpc-java</pluginId>

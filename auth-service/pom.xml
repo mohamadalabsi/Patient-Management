@@ -6,7 +6,12 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.2</version>
+        <!--
+            PHASE 0 (step 0.2): 4.0.2 -> 4.0.9 - same Boot version in every service
+            (the parent is a BOM that fixes all Spring library versions; see patient-service/pom.xml).
+        -->
+        <!-- PHASE 0 (old): <version>4.0.2</version> -->
+        <version>4.0.9</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.pm</groupId>
@@ -31,6 +36,17 @@
         <java.version>21</java.version>
     </properties>
     <dependencies>
+        <!--
+            PHASE 0 (step 0.4): NEW - Spring Boot Actuator.
+            Adds production endpoints under /actuator, most importantly
+            /actuator/health. Docker (now) and Kubernetes (Phase 7) call it to ask
+            "is this service really ready?" instead of only "is the process running?".
+            In Phase 5 the same library exposes metrics for Prometheus.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter</artifactId>
@@ -56,9 +72,44 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
+        <!--
+            PHASE 0 (step 0.5): NEW - Flyway database migrations.
+            Before, Hibernate changed the schema itself (ddl-auto=update). That cannot
+            rename/drop columns safely, is not reviewable in a pull request and cannot
+            be reproduced exactly on another database. With Flyway the schema is
+            defined by versioned SQL files in src/main/resources/db/migration that
+            run once each, in order, on startup.
+            - spring-boot-starter-flyway: Boot 4 moved the Flyway auto-configuration
+              into its own starter.
+            - flyway-database-postgresql: since Flyway 10, support for each database
+              is a separate module.
+            Both versions come from the Boot BOM.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!--
+            PHASE 0 (step 0.2): NEW - fixes audit finding B6.
+            AuthController uses @Valid on LoginRequestDTO, and the DTO has @Email,
+            @NotBlank and @Size(min = 8). Those annotations are only a description;
+            something has to EXECUTE them. That "something" is a Bean Validation
+            provider (Hibernate Validator), which this starter brings in.
+            Without it Spring silently ignores @Valid - so login requests were never
+            validated. patient-service already had this starter, auth-service did not.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
         <dependency>
@@ -91,7 +142,12 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-            <version>2.6.0</version>
+            <!--
+                PHASE 0 (step 0.2): springdoc is not managed by the Boot BOM.
+                2.x is built for Boot 3; 3.0.x is built for Boot 4.0.
+            -->
+            <!-- PHASE 0 (old): <version>2.6.0</version> -->
+            <version>3.0.3</version>
         </dependency>
 
 
