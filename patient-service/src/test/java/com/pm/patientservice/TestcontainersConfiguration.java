@@ -3,8 +3,8 @@ package com.pm.patientservice;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.testcontainers.kafka.KafkaContainer;
-import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 /**
@@ -33,13 +33,17 @@ import org.testcontainers.utility.DockerImageName;
  * ddl-auto=validate - so starting the app also proves entities and migrations match.
  */
 @TestConfiguration(proxyBeanMethods = false)
+// PHASE 1 (step 1.5): the Postgres bean moved to PostgresTestConfiguration (reused by
+// the @DataJpaTest repository tests, which do not need Kafka).
+@Import(PostgresTestConfiguration.class)
 public class TestcontainersConfiguration {
 
-    @Bean
-    @ServiceConnection
-    PostgreSQLContainer postgresContainer() {
-        return new PostgreSQLContainer(DockerImageName.parse("postgres:16"));
-    }
+    // PHASE 1 (old):
+    // @Bean
+    // @ServiceConnection
+    // PostgreSQLContainer postgresContainer() {
+    //     return new PostgreSQLContainer(DockerImageName.parse("postgres:16"));
+    // }
 
     @Bean
     @ServiceConnection
