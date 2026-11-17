@@ -10,7 +10,18 @@ The former `infrastructure/` (AWS CDK / LocalStack) folder was removed intention
 
 All services are on **Spring Boot 4.0.9** (aligned in Phase 0). `api-gateway` uses Spring Cloud 2025.1.x with `spring-cloud-starter-gateway-server-webflux` (routes under `spring.cloud.gateway.server.webflux.routes`) plus `spring-boot-starter-webclient`; the others are servlet/WebMVC. Boot 4 is modular: features like Kafka, Flyway, WebClient need their own `spring-boot-starter-*` for auto-configuration. Libraries outside the Boot BOM (springdoc 3.0.x, grpc 1.69, protobuf, `net.devh` gRPC server starter in billing only) are pinned by hand.
 
-Work is organised in phases (`docs/implementation-plans/roadmap.md`, one `phase-XX-*.md` per phase). Code convention in this repo: changes are explained in code comments tagged `PHASE n (step x.y)`, and replaced code is kept commented out as `PHASE n (old)` rather than deleted.
+Work is organised in phases (`docs/implementation-plans/roadmap.md`, one `phase-XX-*.md` per phase). Code convention in this repo: changes are explained in code comments tagged `PHASE n (step x.y)`, and replaced code is kept commented out as `PHASE n (old)` rather than deleted. Follow `.claude/skills/service-conventions` for all service code.
+
+## Phase workflow (mandatory for every phase)
+
+1. **The developer creates the phase branch** (`feature/phase-XX-<name>` from `dev-branch`). Never create, switch, delete, push or merge branches yourself.
+2. **First commit of the phase = the plan**: `docs/implementation-plans/phase-XX-<name>.md` (Goal · Out of scope · Versions · Concepts · Steps · Verification · Exercises · Risks · What changed) and the phase row in the roadmap Progress table set to in progress. Wait for the developer to approve the plan before writing code.
+3. **One commit per step** (`feat|fix|chore|docs(phase-N): step N.x - ...`), each verified against Docker before committing.
+4. **Second-to-last commit = docs**: README, this file, roadmap Progress (done), the phase file's "What changed".
+5. **Last commit of the phase = the phase skill**: create or extend a skill in `.claude/skills/<name>/SKILL.md` capturing the conventions the phase established, and add its row to the skill table in `.claude/README.md`. A phase is not finished without it.
+6. Stop and report; the developer pushes, opens the PR into `dev-branch` and creates the next branch.
+
+(Phase 1 is the one exception: its first commit is the Phase 0 skill + `.claude/settings.json`, because Phase 0 was already merged; its plan is the second commit.)
 
 ## Commands
 
