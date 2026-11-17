@@ -11,7 +11,9 @@ public class PatientIntegrationTest {
 
     @BeforeAll
     static void setup() {
-        RestAssured.baseURI = "http://localhost:4004";
+        // PHASE 1 (step 1.11): base URL from E2E (configurable with -Dgateway.url)
+        // PHASE 1 (old): RestAssured.baseURI = "http://localhost:4004";
+        E2E.configure();
     }
 
     @Test

@@ -4,15 +4,31 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!--
+        END-TO-END tests: they call the RUNNING stack through the api-gateway over HTTP
+        (docker compose up first). They cannot see any service's classes - that is the point:
+        they test the system exactly as a client sees it.
+        How to run them through Docker: see README, section "Testing".
+        The property gateway.url defaults to http://localhost:4004 (runs with a local JDK).
+    -->
+
     <groupId>com.pm</groupId>
     <artifactId>Integration-tests</artifactId>
     <version>1.0-SNAPSHOT</version>
+
+    <!-- PHASE 1 (step 1.11): NEW - one place for versions and the Java level -->
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
 
     <dependencies>
         <dependency>
             <groupId>io.rest-assured</groupId>
             <artifactId>rest-assured</artifactId>
-            <version>5.3.0</version>
+            <!-- PHASE 1 (step 1.11): 5.3.0 (2022) -> 5.5.7, latest 5.x (same API) -->
+            <!-- PHASE 1 (old): <version>5.3.0</version> -->
+            <version>5.5.7</version>
             <scope>test</scope>
 
         </dependency>
@@ -20,7 +36,9 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <version>6.0.2</version>
+            <!-- PHASE 1 (step 1.11): same JUnit as the services (Spring Boot 4.0.9 BOM) -->
+            <!-- PHASE 1 (old): <version>6.0.2</version> -->
+            <version>6.0.3</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -29,10 +47,17 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <!--
+                    PHASE 1 (step 1.11): source/target 15 -> release 21 (property above).
+                    The services run on Java 21; "release" also checks that only Java 21 APIs
+                    are used. Java 15 was never a long-term-support version.
+                -->
+                <!-- PHASE 1 (old):
                 <configuration>
                     <source>15</source>
                     <target>15</target>
                 </configuration>
+                -->
             </plugin>
         </plugins>
     </build>
