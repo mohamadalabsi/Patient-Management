@@ -1,0 +1,191 @@
+# -----------------------------------------------------------------------------
+# PHASE 2 (step 2.1): NEW - the CI pipeline of the whole repo.
+#
+# A WORKFLOW reacts to EVENTS (push, pull request). It contains JOBS; every job
+# runs on a fresh Linux machine from GitHub (a RUNNER) and jobs run in parallel
+# unless one "needs" another. A job is a list of STEPS: shell commands (run:)
+# or reusable building blocks (uses: owner/action).
+#
+# Jobs in this file (more are added in steps 2.2 and 2.3):
+#   changes    -> which services changed?             (seconds)
+#   test       -> mvn verify, once per changed service (in parallel)
+#   ci-result  -> ONE summary check, used later by branch protection
+#
+# Third-party actions are pinned to a full commit SHA, with the version as a
+# comment. A tag like "v7" can be moved to other code by whoever controls the
+# action; a commit SHA cannot. Dependabot (step 2.4) still proposes updates.
+# -----------------------------------------------------------------------------
+name: CI
+
+on:
+  # Every pull request INTO dev-branch or master (also each new push to the PR).
+  pull_request:
+    branches: [dev-branch, master]
+  # Every push TO dev-branch or master - in our workflow that is a merged PR.
+  push:
+    branches: [dev-branch, master]
+  # A "Run workflow" button in the Actions tab, to start it by hand.
+  workflow_dispatch:
+
+# Least privilege: the automatic GITHUB_TOKEN may only READ the repository.
+# Jobs that need more ask for it themselves.
+permissions:
+  contents: read
+
+# A new push to the same PR cancels the run that is still going for the old
+# commit (its result would be outdated anyway). Runs on dev-branch / master are
+# never cancelled, so every merge is fully checked.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Which services changed? Output: a JSON list, e.g. ["billing-service"].
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect changed services
+    runs-on: ubuntu-24.04            # pinned image, not ubuntu-latest (no surprise upgrades)
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read            # paths-filter asks the PR API for the changed files
+    outputs:
+      services: ${{ steps.result.outputs.services }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false   # do not leave the token in .git/config
+
+      # One filter per service. A filter "matches" when any changed file fits one
+      # of its patterns. The shared contracts count for the services that compile
+      # them (see each pom's <includes>). Changing this workflow file re-tests all.
+      - name: Compare changed files with the service folders
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            patient-service:
+              - 'patient-service/**'
+              - 'proto/billing_service.proto'
+              - 'proto/patient_event.proto'
+              - '.github/workflows/ci.yml'
+            billing-service:
+              - 'billing-service/**'
+              - 'proto/billing_service.proto'
+              - '.github/workflows/ci.yml'
+            analytics-service:
+              - 'analytics-service/**'
+              - 'proto/patient_event.proto'
+              - '.github/workflows/ci.yml'
+            auth-service:
+              - 'auth-service/**'
+              - '.github/workflows/ci.yml'
+            api-gateway:
+              - 'api-gateway/**'
+              - '.github/workflows/ci.yml'
+
+      # "changes" = JSON list of the filter names that matched.
+      # Started by hand (workflow_dispatch) there is nothing to compare, so: all services.
+      - name: Build the list of services to test
+        id: result
+        env:
+          ALL: '["patient-service","billing-service","analytics-service","auth-service","api-gateway"]'
+          CHANGED: ${{ steps.filter.outputs.changes }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "services=$ALL" >> "$GITHUB_OUTPUT"
+          else
+            echo "services=${CHANGED:-[]}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # mvn verify for every changed service, in parallel (a MATRIX job: the same
+  # job definition, started once per value of matrix.service).
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test ${{ matrix.service }}
+    needs: changes
+    if: needs.changes.outputs.services != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false               # one red service must not cancel the others
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.service }}   # every "run:" starts in the service folder
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # JDK 21 (Temurin = same as our Dockerfiles). cache: maven saves ~/.m2/repository
+      # after the run and restores it next time; the key is a hash of the pom, so a
+      # dependency change creates a fresh cache.
+      - name: Set up Java 21
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: ${{ matrix.service }}/pom.xml
+
+      # verify = compile, unit + Testcontainers tests (surefire), JaCoCo report.
+      # The runner has a normal Docker daemon, so Testcontainers starts Postgres/Kafka
+      # directly - no socket mount or TESTCONTAINERS_HOST_OVERRIDE as in mvn-test.sh.
+      # -B = batch mode (no colours/progress bars in the log).
+      - name: Build and test (mvn verify)
+        run: ./mvnw -B verify
+
+      # Line coverage from JaCoCo's CSV (columns 8 = lines missed, 9 = lines covered),
+      # written to the job summary page that GitHub shows for each run.
+      - name: Coverage summary
+        if: always()
+        run: |
+          csv=target/site/jacoco/jacoco.csv
+          if [ -f "$csv" ]; then
+            awk -F, -v svc="${{ matrix.service }}" 'NR>1 {m+=$8; c+=$9}
+              END {printf "### %s\nLine coverage: **%.1f%%** (%d of %d lines)\n", svc, (m+c ? 100*c/(m+c) : 0), c, m+c}' \
+              "$csv" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Keep test results and the HTML coverage report for 14 days, also (always())
+      # when the tests failed - that is exactly when you want to read them.
+      # Download: Actions tab -> the run -> "Artifacts".
+      - name: Upload test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-${{ matrix.service }}
+          path: |
+            ${{ matrix.service }}/target/surefire-reports/
+            ${{ matrix.service }}/target/site/jacoco/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # One summary check. With path filters, the "Test xyz" jobs exist only when xyz
+  # changed, so branch protection cannot require them by name. It requires this
+  # job instead: red if any job it needs failed or was cancelled; skipped
+  # jobs (nothing changed) are fine.
+  # ---------------------------------------------------------------------------
+  ci-result:
+    name: CI result
+    needs: [changes, test]
+    if: always()                     # run even when a needed job failed - that is the point
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any job failed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          case "$RESULTS" in
+            *failure*|*cancelled*) exit 1 ;;
+          esac
