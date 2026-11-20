@@ -15,10 +15,13 @@ Work is organised in phases (`docs/implementation-plans/roadmap.md`, one `phase-
 ## Phase workflow (mandatory for every phase)
 
 1. **The developer creates the phase branch** (`feature/phase-XX-<name>` from `dev-branch`). Never create, switch, delete, push or merge branches yourself.
-2. **First commit of the phase = the plan**: `docs/implementation-plans/phase-XX-<name>.md` (Goal · Out of scope · Versions · Concepts · Steps · Verification · Exercises · Risks · What changed) and the phase row in the roadmap Progress table set to in progress. Wait for the developer to approve the plan before writing code.
-3. **One commit per step** (`feat|fix|chore|docs(phase-N): step N.x - ...`), each verified against Docker before committing.
+2. **First commit of the phase = the plan**: `docs/implementation-plans/phase-XX-<name>.md` and the phase row in the roadmap Progress table set to in progress. Wait for the developer to approve the plan before writing code. The plan must be understandable **without reading the code** (`phase-01-testing.md` is the model):
+   - sections: Goal · Out of scope · **Technology map** (technology, what it is, why we use it, which steps) · Versions · Concepts · Steps · Verification · Exercises · Risks · What changed;
+   - every step explains **What** · **Why** · **How** (which technology, how it works, key files) · **When** (when to use the same technique elsewhere) · **Verified** (how it was tested);
+   - **keep phases small: about 4-6 steps.** Group related work into one step instead of many tiny ones; the developer already knows some topics (e.g. CI, Docker Hub) and wants the essentials, not a tutorial.
+3. **One commit per step** (`feat|fix|chore|docs(phase-N): step N.x - ...`), each verified against Docker before committing. Code comments (`PHASE n (step x.y)`) explain each change in the code too, including CI/YAML files (what every job and step does).
 4. **Second-to-last commit = docs**: README, this file, roadmap Progress (done), the phase file's "What changed".
-5. **Last commit of the phase = the phase skill**: create or extend a skill in `.claude/skills/<name>/SKILL.md` capturing the conventions the phase established, and add its row to the skill table in `.claude/README.md`. A phase is not finished without it.
+5. **Last commit of the phase = the phase skill**: create or extend a skill in `.claude/skills/<name>/SKILL.md` capturing the conventions the phase established, and add its row to the skill table in `.claude/README.md`. A phase is not finished without it. Skills are **stack-agnostic**: part A = principles that hold in any language; part B = how they map to a stack (B1 = Java/Spring Boot as used in this repo, with exact tools and commands; B2 = equivalents for other common stacks).
 6. Stop and report; the developer pushes, opens the PR into `dev-branch` and creates the next branch.
 
 (Phase 1 is the one exception: its first commit is the Phase 0 skill + `.claude/settings.json`, because Phase 0 was already merged; its plan is the second commit.)
