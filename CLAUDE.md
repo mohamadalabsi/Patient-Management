@@ -10,7 +10,21 @@ The former `infrastructure/` (AWS CDK / LocalStack) folder was removed intention
 
 All services are on **Spring Boot 4.0.9** (aligned in Phase 0). `api-gateway` uses Spring Cloud 2025.1.x with `spring-cloud-starter-gateway-server-webflux` (routes under `spring.cloud.gateway.server.webflux.routes`) plus `spring-boot-starter-webclient`; the others are servlet/WebMVC. Boot 4 is modular: features like Kafka, Flyway, WebClient need their own `spring-boot-starter-*` for auto-configuration. Libraries outside the Boot BOM (springdoc 3.0.x, grpc 1.69, protobuf, `net.devh` gRPC server starter in billing only) are pinned by hand.
 
-Work is organised in phases (`docs/implementation-plans/roadmap.md`, one `phase-XX-*.md` per phase). Code convention in this repo: changes are explained in code comments tagged `PHASE n (step x.y)`, and replaced code is kept commented out as `PHASE n (old)` rather than deleted.
+Work is organised in phases (`docs/implementation-plans/roadmap.md`, one `phase-XX-*.md` per phase). Code convention in this repo: changes are explained in code comments tagged `PHASE n (step x.y)`, and replaced code is kept commented out as `PHASE n (old)` rather than deleted. Follow `.claude/skills/service-conventions` for all service code.
+
+## Phase workflow (mandatory for every phase)
+
+1. **The developer creates the phase branch** (`feature/phase-XX-<name>` from `dev-branch`). Never create, switch, delete, push or merge branches yourself.
+2. **First commit of the phase = the plan**: `docs/implementation-plans/phase-XX-<name>.md` and the phase row in the roadmap Progress table set to in progress. Wait for the developer to approve the plan before writing code. The plan must be understandable **without reading the code** (`phase-01-testing.md` is the model):
+   - sections: Goal · Out of scope · **Technology map** (technology, what it is, why we use it, which steps) · Versions · Concepts · Steps · Verification · Exercises · Risks · What changed;
+   - every step explains **What** · **Why** · **How** (which technology, how it works, key files) · **When** (when to use the same technique elsewhere) · **Verified** (how it was tested);
+   - **keep phases small: about 4-6 steps.** Group related work into one step instead of many tiny ones; the developer already knows some topics (e.g. CI, Docker Hub) and wants the essentials, not a tutorial.
+3. **One commit per step** (`feat|fix|chore|docs(phase-N): step N.x - ...`), each verified against Docker before committing. Code comments (`PHASE n (step x.y)`) explain each change in the code too, including CI/YAML files (what every job and step does).
+4. **Second-to-last commit = docs**: README, this file, roadmap Progress (done), the phase file's "What changed".
+5. **Last commit of the phase = the phase skill**: create or extend a skill in `.claude/skills/<name>/SKILL.md` capturing the conventions the phase established, and add its row to the skill table in `.claude/README.md`. A phase is not finished without it. Skills are **stack-agnostic**: part A = principles that hold in any language; part B = how they map to a stack (B1 = Java/Spring Boot as used in this repo, with exact tools and commands; B2 = equivalents for other common stacks).
+6. Stop and report; the developer pushes, opens the PR into `dev-branch` and creates the next branch.
+
+(Phase 1 is the one exception: its first commit is the Phase 0 skill + `.claude/settings.json`, because Phase 0 was already merged; its plan is the second commit.)
 
 ## Commands
 
@@ -22,16 +36,18 @@ docker compose up --build
 docker compose up --build patient-service      # rebuild one service
 docker compose down -v                         # also wipes DB volumes (needed after changing DB creds in .env)
 
-# Build/test a single service without a local JDK (cache deps in a named volume)
-docker run --rm -v "$PWD/patient-service":/ws -v pm-m2-cache:/root/.m2 -w /ws \
-  maven:3.9.9-eclipse-temurin-21 mvn -B test
+# Test one service without a local JDK (maven image + Docker socket for Testcontainers)
+scripts/mvn-test.sh patient-service
+scripts/mvn-test.sh patient-service -Dtest=PatientControllerTest          # one class
+scripts/mvn-test.sh patient-service -Dtest='PatientServiceTest*#create*'  # methods (nested classes need the *)
 
-# Single test class / method
-... mvn -B test -Dtest=PatientServiceApplicationTests
-... mvn -B test -Dtest=ClassName#methodName
+# End-to-end tests against the running compose stack
+docker run --rm -v "$PWD/Integration-tests":/ws -v pm-m2-cache:/root/.m2 -w /ws \
+  --add-host=host.docker.internal:host-gateway maven:3.9.9-eclipse-temurin-21 \
+  mvn -B test -Dgateway.url=http://host.docker.internal:4004
 ```
 
-With a local JDK, the equivalent is `./mvnw test` inside a service directory. Integration tests (`cd Integration-tests && mvn test`, or the maven container with `--network host`) hit `http://localhost:4004` and require the full compose stack running; they log in as `testuser@test.com` / `password123`, seeded by the dev-only Flyway migration `auth-service/src/main/resources/db/dev-data/R__dev_test_user.sql` (enabled via `SPRING_FLYWAY_LOCATIONS` in compose). Per-service `contextLoads` tests still need a real DB (fixed in Phase 1 with Testcontainers), hence `-DskipTests` in Dockerfiles.
+With a local JDK, the equivalent is `./mvnw test` inside a service directory. Per-service tests need only Docker: Testcontainers starts `postgres:16` / `apache/kafka:4.3.2` (same images as compose) and `@ServiceConnection` wires them; no `.env`, no fixed ports. `scripts/mvn-test.sh` always runs `mvn clean test` (stale `target/` files once overrode `application.yml`). Mockito runs as a `-javaagent` configured in each POM's surefire plugin (self-attach fails on Java 21 in the container). Test classes must end in `Test`/`Tests` - surefire ignores `*IT`. Follow `.claude/skills/testing-conventions` when writing tests. `Integration-tests/` (REST Assured E2E) logs in as `testuser@test.com` / `password123`, seeded by the dev-only Flyway migration `auth-service/src/main/resources/db/dev-data/R__dev_test_user.sql` (enabled via `SPRING_FLYWAY_LOCATIONS` in compose). Dockerfiles keep `-DskipTests` (Testcontainers inside `docker build` would need Docker-in-Docker); tests run as their own step.
 
 Each service's Dockerfile is a multi-stage Maven build (`mvn package -DskipTests`), so `docker compose up --build` compiles from source — no need to pre-build jars. patient/billing/analytics are built with the **repo root** as build context (`dockerfile: <svc>/Dockerfile`) so they can copy `proto/`; root `.dockerignore` keeps the context small. All services have Actuator readiness healthchecks and start via `depends_on: service_healthy`.
 

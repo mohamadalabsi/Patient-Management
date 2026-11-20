@@ -9,7 +9,9 @@ public class AuthIntegrationTest {
 
     @BeforeAll
     static void setup() {
-        RestAssured.baseURI = "http://localhost:4004";
+        // PHASE 1 (step 1.11): base URL from E2E (configurable with -Dgateway.url)
+        // PHASE 1 (old): RestAssured.baseURI = "http://localhost:4004";
+        E2E.configure();
     }
 
     @Test
@@ -31,7 +33,9 @@ public class AuthIntegrationTest {
                 .body("token", notNullValue())
                 .extract()
                 .response();
-        System.out.println("Generated token : " + response.jsonPath().getString("token"));
+        // PHASE 1 (step 1.11): do not print the token - a valid JWT in build logs (CI logs
+        // are often readable by many people) is a credential leak.
+        // PHASE 1 (old): System.out.println("Generated token : " + response.jsonPath().getString("token"));
     }
 
     @Test

@@ -40,6 +40,9 @@
     </scm>
     <properties>
         <java.version>21</java.version>
+        <!-- PHASE 1 (step 1.3): empty default so "@{argLine}" below always resolves.
+             Tools like JaCoCo (Phase 2) put their own agent into argLine. -->
+        <argLine></argLine>
     </properties>
     <dependencies>
         <!--
@@ -193,6 +196,50 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-kafka</artifactId>
         </dependency>
+        <!--
+            PHASE 1 (step 1.1): NEW - test dependencies (all <scope>test</scope>: they are
+            on the classpath only while tests compile/run, never in the jar or the image).
+            No <version> on most of them: the Spring Boot 4.0.9 BOM manages them
+            (Testcontainers 2.0.5, Awaitility 4.3.0, JUnit 6, Mockito 5, AssertJ 3).
+            - spring-boot-testcontainers: @ServiceConnection - Boot reads the URL/user/password of
+              a container started by the test and configures the app with it (no properties).
+            - testcontainers-*: starts REAL throwaway Postgres/Kafka in Docker for the test run.
+              Testcontainers 2.x renamed its modules to "testcontainers-<module>".
+            - spring-boot-starter-kafka-test: spring-kafka-test (KafkaTestUtils helpers to
+              read/write test records).
+            - awaitility: wait for something asynchronous (a Kafka message) with a timeout
+              instead of Thread.sleep - makes async tests fast AND not flaky.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -248,6 +295,38 @@
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+            <!--
+                PHASE 1 (step 1.3): NEW - load Mockito as a Java agent for the tests.
+                Mockito changes classes at runtime (to mock final classes / records) with an
+                "inline mock maker". It used to attach itself to the running JVM; since
+                Java 21 that self-attach is deprecated and inside the maven container it
+                fails ("Could not self-attach to current VM") -> every mock test errors.
+                The fix recommended by Mockito: start the test JVM with
+                -javaagent:<mockito-core.jar>.
+                1. maven-dependency-plugin "properties" goal defines a property per
+                   dependency holding its jar path: ${org.mockito:mockito-core:jar}
+                2. surefire passes it to the forked test JVM. "@{argLine}" keeps whatever
+                   other plugins (JaCoCo in Phase 2) add.
+                Versions of both plugins come from the Spring Boot parent.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
+                </configuration>
             </plugin>
         </plugins>
     </build>

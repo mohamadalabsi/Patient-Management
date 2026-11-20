@@ -31,3 +31,7 @@ target/
 # Operating-system junk files
 .DS_Store
 Thumbs.db
+
+# PHASE 1 (step 1.0): personal Claude Code settings (e.g. permission to read .env).
+# Shared settings live in .claude/settings.json and ARE committed.
+.claude/settings.local.json
