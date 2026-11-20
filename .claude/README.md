@@ -33,6 +33,10 @@ decision for one machine with local dev secrets, so it is not committed for ever
 Each roadmap phase ends with a commit that adds or extends a skill capturing what the
 phase established, so later work follows the same rules.
 
+Skills are **stack-agnostic**: part A = principles that hold in any language, part B1 = how
+this repo implements them (Java 21 / Spring Boot 4, exact tools and commands), part B2 = the
+equivalent tools in other stacks (Node.js, Python, Go).
+
 | Phase | Skill |
 |---|---|
 | 0 - fixes & foundation | `skills/service-conventions` - code style, service structure, API, DB, messaging, Docker |
