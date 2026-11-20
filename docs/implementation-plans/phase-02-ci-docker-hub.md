@@ -13,7 +13,8 @@ You should understand the whole phase from this file alone, without opening the 
 The **Technology map** says which tools are used and why. **Steps** says, for every step, *what* is done,
 *why*, *how*, *when* you would use the same technique elsewhere, and *how it is verified*.
 In the workflow YAML every job and every step gets a `# PHASE 2 (step 2.x)` comment.
-**"What you need to do"** lists the things only you can do (accounts, tokens, GitHub settings).
+**"What you need to do"** lists the things only you can do (accounts, tokens, GitHub settings), and
+**"Run order"** says exactly who does what, in which order, from approval to merge.
 
 ## Goal
 
@@ -52,6 +53,39 @@ Only you can do these. I will remind you at the step that needs each one.
 
 Nothing else is needed: the end-to-end job generates throwaway database passwords and a JWT secret
 inside the CI run, so no `.env` values go to GitHub.
+
+## Run order - who does what
+
+The exact order of the phase. **You** = the developer, **Claude** = me. I stop at every "You" line
+and wait until you tell me it is done.
+
+| # | Who | What |
+|---|---|---|
+| 1 | You | Read this plan and approve it (or ask for changes). |
+| 2 | You | *Optional, makes 4-17 easier:* install the GitHub CLI (`sudo apt install gh`, then `! gh auth login`) so I can read CI runs and logs myself. Without it I read the run status through GitHub's public API, and you paste the log of a failing step. |
+| 3 | Claude | **Step 2.1**: write `.github/workflows/ci.yml` (jobs `changes` + `test`), JaCoCo in the 5 POMs, make `mvnw` executable. Check locally that `mvn verify` produces the coverage report. Commit. |
+| 4 | You | Push the branch: `git push -u origin feature/phase-02-ci-docker-hub`. |
+| 5 | You | Open a **draft pull request** `feature/phase-02-ci-docker-hub` -> `dev-branch` on GitHub. From now on, every push to the branch runs CI on that PR. |
+| 6 | Claude | Read the run together with you: which jobs ran, were they green, how long they took. If something fails: fix, commit, back to 4 (push only). |
+| 7 | Claude | Prove the check works: a temporary commit that breaks one test. |
+| 8 | You | Push. The PR check must turn **red**. |
+| 9 | Claude | Revert the temporary commit (`git revert`, so history shows the experiment). |
+| 10 | You | Push. Green again. |
+| 11 | Claude | **Step 2.2**: add the `e2e` job (compose stack with a generated `.env`, `Integration-tests`, logs on failure). Commit. |
+| 12 | You | Push. |
+| 13 | Claude | Read the run (e2e green, runtime noted). Fix and repeat 12 if needed. |
+| 14 | You | **Docker Hub**: create the access token (Read & Write). Optional: create the 5 repositories if they should be private. |
+| 15 | You | **GitHub**: add the secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. Tell me "secrets done". |
+| 16 | Claude | **Step 2.3**: add the `images` job (build, Trivy, push only after a merge) and layered jars in the 5 Dockerfiles. Check locally: `docker compose up --build` still healthy, E2E still green. Commit. |
+| 17 | You | Push. On the PR the images are **built and scanned but not pushed**; I read the Trivy result with you. |
+| 18 | Claude | **Step 2.4**: `.github/dependabot.yml`. Commit. |
+| 19 | Claude | **Step 2.5**: docs (README CI/CD, CLAUDE.md, roadmap, this file's "What changed"). Commit. |
+| 20 | Claude | **Step 2.6**: skill `ci-conventions`. Commit. Report the phase as finished. |
+| 21 | You | Push. Mark the PR "Ready for review", check that all checks are green, merge into `dev-branch`. |
+| 22 | You | The merge is a push to `dev-branch`, so the `images` job now runs for real. Check Docker Hub: the changed services have tags `sha-<commit>` and `dev`. Tell me. |
+| 23 | Claude | Verify one image: `docker pull` + `docker run`, and look at its layers. (These results go into the first commit of Phase 3, because this branch is already merged.) |
+| 24 | You | Protect `dev-branch` (Settings -> Branches: require the CI checks) and turn on Dependabot alerts (Settings -> Code security). |
+| 25 | You | Create the Phase 3 branch from `dev-branch`. |
 
 ## Technology map
 
