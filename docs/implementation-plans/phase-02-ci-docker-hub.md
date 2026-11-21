@@ -4,7 +4,7 @@
 |---|---|
 | Branch | `feature/phase-02-ci-docker-hub` (from `dev-branch` after PR #3) |
 | Depends on | Phase 1 (the tests CI runs) |
-| Status | 📝 plan - waiting for approval |
+| Status | ✅ done (2026-11-21) - merged via the Phase 2 PR (#4) |
 | Roadmap row | GitHub Actions per service (path filters) · build/test · images on Docker Hub tagged by git SHA · Dependabot · Trivy · Docker improvements |
 
 ## How to read this file
@@ -15,6 +15,115 @@ The **Technology map** says which tools are used and why. **Steps** says, for ev
 In the workflow YAML every job and every step gets a `# PHASE 2 (step 2.x)` comment.
 **"What you need to do"** lists the things only you can do (accounts, tokens, GitHub settings), and
 **"Run order"** says exactly who does what, in which order, from approval to merge.
+
+## CI/CD in plain words (read this first)
+
+### What is CI/CD?
+
+- **CI = Continuous Integration.** Every time someone pushes code, a machine that is not your laptop
+  takes that code, builds it and runs all the checks (tests, scans). If anything fails, the pull request
+  shows a red ✗ and the change should not be merged. "Integration" means: everybody's changes are
+  merged into the shared branch often, and each merge is checked automatically, so a broken change is
+  caught within minutes - not weeks later on someone else's machine.
+- **CD = Continuous Delivery / Deployment.** After CI is green, the result is *packaged and shipped*:
+  - *Delivery* = the finished, tested package (for us: a Docker image) is put in a place where it can be
+    deployed at any time (for us: Docker Hub).
+  - *Deployment* = it is also started on servers automatically.
+  This phase does **CI + delivery**. Deployment comes in Phase 7 (Kubernetes) and Phase 8 (AWS), which
+  will pull the images we publish now.
+
+A useful picture: CI is the **quality gate** at the door of `dev-branch`; CD is the **conveyor belt**
+that takes whatever passed the gate to the warehouse (Docker Hub).
+
+### How we use it in this project
+
+One file, `.github/workflows/ci.yml`, runs on GitHub's machines whenever:
+
+| Event | What happens |
+|---|---|
+| you push to a branch that has a **pull request** into `dev-branch` / `master` | tests + end-to-end tests + images are **built and scanned**, nothing is published |
+| a PR is **merged** (= a push to `dev-branch` / `master`) | the same checks again, and then the images are **pushed to Docker Hub** |
+| you click "Run workflow" in the Actions tab | everything, for all 5 services |
+
+It only works on **what changed**: a PR that touches only `billing-service/` tests and builds only
+billing. A second file, `.github/dependabot.yml`, makes GitHub open update PRs once a week; those PRs
+go through the same CI.
+
+### How the jobs are connected
+
+```
+                  push / pull request
+                         │
+                ┌────────▼─────────┐
+                │ changes          │  which services changed? -> ["billing-service", ...]
+                └────────┬─────────┘                            does the whole stack need a run?
+                         │
+        ┌────────────────┼────────────────┐   one job per changed service, in parallel
+  ┌─────▼──────┐   ┌─────▼──────┐   ┌─────▼──────┐
+  │ test       │   │ test       │   │ test       │  mvn verify: unit + Testcontainers tests,
+  │ patient    │   │ billing    │   │ ...        │  JaCoCo coverage, reports as artifacts
+  └─────┬──────┘   └─────┬──────┘   └─────┬──────┘
+        └────────────────┼────────────────┘   only if no test failed
+                ┌────────▼─────────┐
+                │ e2e              │  docker compose up --wait (whole stack, throwaway .env)
+                └────────┬─────────┘  + Integration-tests through the gateway
+                         │            only if e2e passed
+        ┌────────────────┼────────────────┐
+  ┌─────▼──────┐   ┌─────▼──────┐   ┌─────▼──────┐
+  │ images     │   │ images     │   │ images     │  build -> Trivy scan -> (after merge) push
+  │ patient    │   │ billing    │   │ ...        │  docker.io/<you>/pm-<service>:sha-<commit>
+  └─────┬──────┘   └─────┬──────┘   └─────┬──────┘
+        └────────────────┼────────────────┘
+                ┌────────▼─────────┐
+                │ ci-result        │  ONE green/red answer for the PR (branch protection uses it)
+                └──────────────────┘
+```
+
+Each box is a **job** = a fresh Linux machine. An arrow is `needs:` = "start only after that job, and
+only if it succeeded". The order is deliberate: the cheap, fast checks first, the slow ones only when
+the fast ones passed, and publishing last - so **only tested code is ever published**.
+
+### What we did (the result)
+
+1. **Tests on every PR** (step 2.1): the 5 services' tests run on GitHub, in parallel, only for the changed
+   services; coverage is shown on the run page. Proven by a deliberately broken test that turned the PR red.
+2. **End-to-end tests on every PR** (step 2.2): the full stack starts in CI exactly like on your laptop and
+   the 9 REST Assured journeys run against it.
+3. **Images** (step 2.3): every changed service's image is built and scanned for known vulnerabilities;
+   after a merge it is pushed to Docker Hub with an exact commit tag (`sha-…`) plus `dev` / `latest`.
+4. **Automatic updates** (step 2.4): Dependabot proposes library, base-image and action updates weekly.
+
+A full run takes about 5 minutes (tests ~1.5 min, e2e ~2 min, images ~1.5 min with a warm cache).
+
+### Technologies, in one line each
+
+| Technology | In one line |
+|---|---|
+| GitHub Actions | GitHub's built-in CI: YAML in `.github/workflows/`, runs on GitHub's Linux machines |
+| `dorny/paths-filter` | answers "which folders changed?" so only those services run |
+| Job matrix | "run this job once per service in the list", in parallel |
+| `actions/setup-java` | installs Java 21 and caches Maven downloads between runs |
+| Testcontainers | the Phase 1 tests start real Postgres/Kafka - works on GitHub's machines as-is |
+| JaCoCo | measures which lines the tests executed (coverage report) |
+| Docker Compose | the same `docker-compose.yml` as locally starts the whole stack for the e2e job |
+| Docker Buildx + build-push-action | builds images, with a layer cache stored in GitHub |
+| metadata-action | turns git info into image tags (`sha-abc1234`, `dev`, `latest`) |
+| login-action | logs in to Docker Hub with the token from GitHub secrets |
+| Trivy | scans an image for known vulnerabilities (CVEs) before it is published |
+| Spring Boot layered jars | splits the app into "libraries" and "our code" layers so pushes are small |
+| Dependabot | GitHub bot that opens a PR when a dependency has a new version |
+| actionlint, check-jsonschema | local linters that catch YAML mistakes before pushing |
+
+### What we had to change in the project to make it work
+
+| Change | Why it was needed |
+|---|---|
+| `mvnw` files stored as **executable** in git (`chmod +x` via `git update-index`) | on Linux `./mvnw` failed with "permission denied"; Windows does not track the flag |
+| **JaCoCo** plugin added to the 5 POMs | to get a coverage number in CI (it attaches to the `@{argLine}` hook prepared in Phase 1) |
+| Nothing for **Testcontainers** | GitHub's machines have Docker; the Phase 1 tests ran unchanged |
+| Nothing in `docker-compose.yml` | `--wait` uses the Phase 0 healthchecks; CI only provides a generated env file with random passwords |
+| **Dockerfiles**: jar split into layers | so a code change uploads ~100 kB instead of the whole ~110 MB jar |
+| Two GitHub **secrets** (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`) set by you | so CI can push to Docker Hub without a password in the repo |
 
 ## Goal
 
@@ -179,9 +288,12 @@ result with you) and, where possible, locally first.
   - `build-push-action` with `cache-from/to: type=gha` (BuildKit layer cache stored in GitHub).
   - Trivy scans the built image **before** the push; the job fails on `CRITICAL` vulnerabilities that have a
     fix (`ignore-unfixed: true`); `HIGH` ones are reported in the log.
-  - Dockerfile runtime stage: `java -Djarmode=tools -jar app.jar extract --layers --launcher`, then one `COPY`
-    per layer (dependencies, spring-boot-loader, snapshot-dependencies, application). The old lines stay
-    commented out.
+  - Dockerfile build stage: `java -Djarmode=tools -jar app.jar extract --layers --application-filename app.jar`;
+    runtime stage: one `COPY` per layer (dependencies, spring-boot-loader, snapshot-dependencies, application).
+    The old single `COPY` stays commented out. *Changed during the step:* the plan said `--launcher`
+    (start via `JarLauncher`); without it the `application` layer holds a thin `app.jar` that finds its
+    libraries in `lib/`, so `ENTRYPOINT java -jar app.jar` stays unchanged - simpler, and Spring's
+    recommended form.
 - **When:** for every service that is deployed from a registry.
 - **Verified:** after merging into `dev-branch`, Docker Hub shows `sha-…` and `dev` tags; `docker pull` +
   `docker run` of one image starts; a second push of a small code change uploads only the app layer.
@@ -210,14 +322,14 @@ actions, scanning, updates; B1 = GitHub Actions + Maven + Docker Hub as in this 
 
 ## Verification (definition of done)
 
-- [ ] A PR runs only the jobs of the changed services; all green
-- [ ] A broken test turns the PR check red
-- [ ] E2E tests run in CI against the compose stack, with logs attached on failure
-- [ ] After a merge into `dev-branch`, Docker Hub has `sha-<commit>` and `dev` tags for the changed services
-- [ ] Trivy runs before every push; no image with a fixable critical CVE is published
-- [ ] No secret appears in the repo or in the logs
-- [ ] Dependabot config is valid (shown in GitHub)
-- [ ] CI runtime noted (budget for later phases)
+- [x] A PR runs only the jobs of the changed services; all green (in this PR all 5 run, because `ci.yml` and all POMs changed - the filter compares the whole PR with `dev-branch`)
+- [x] A broken test turns the PR check red
+- [x] E2E tests run in CI against the compose stack, with logs attached on failure (failure path checked locally)
+- [ ] After a merge into `dev-branch`, Docker Hub has `sha-<commit>` and `dev` tags for the changed services (checked after the merge, run order 22)
+- [x] Trivy runs before every push; no image with a fixable critical CVE is published
+- [x] No secret appears in the repo or in the logs
+- [x] Dependabot config is valid (schema-checked; GitHub shows it once it is on `master`)
+- [x] CI runtime noted (budget for later phases): ~5 min per full run
 
 ## Exercises (for you, after the phase)
 
@@ -242,4 +354,15 @@ actions, scanning, updates; B1 = GitHub Actions + Maven + Docker Hub as in this 
 
 | Step | Commit | Result |
 |---|---|---|
-| plan | (this commit) | this file |
+| plan | `0eb916c`, `62c6f30` | this file; run-order table added, rule added to CLAUDE.md |
+| 2.1 | `7164c58` | `ci.yml` with `changes` -> `test` matrix -> `ci-result`; JaCoCo in 5 POMs; `mvnw` executable. First run: Testcontainers worked on the runner unchanged; api-gateway failed once downloading Maven (network glitch on the very first run, green on re-run). Runtimes: patient 1m40s, auth 1m, others ~45s |
+| 2.1 (fix, reverted) | `cb2f4b8` -> `7bb0fb7` | added an `actions/cache` for `~/.m2/wrapper`; the next run's log showed `setup-java` v6 **already caches the Maven wrapper**, so the step was a duplicate (and printed "Failed to save" in 4 jobs) - reverted. Lesson: read the log of a run before adding a fix |
+| 2.1 (proof) | `b980130` -> `17e4b63` | temporary wrong assertion in `PatientMapperTest`: `Test patient-service` and `CI result` red (`expected: "Anna Broken" but was: "Anna Test"`), reports still uploaded; reverted, green again |
+| 2.2 | `df8a7fb` | `e2e` job: throwaway env file (`openssl rand`), `docker compose up --build --wait`, 9/9 E2E green in CI (2m9s). Locally: billing stopped -> 2 failures (503), logs collected. actionlint caught `runner.temp` in job-level `env` (not allowed) -> `$RUNNER_TEMP` in the steps |
+| 2.3 | `47be382` | `images` job (Buildx, gha cache, metadata tags, Trivy report + gate, push only on push events); layered jars in 5 Dockerfiles (without `--launcher`, see step 2.3). patient: app layer 94 kB vs 106 MB dependencies. Trivy: 0 CRITICAL; 10 HIGH with fixes - `grpc-netty-shaded` 1.69 (pinned by hand), `guava`, `lz4-java`, `snappy-java` (via kafka-clients) - left for Dependabot |
+| 2.4 | `781599e` | `dependabot.yml` (maven ×6 dirs, docker ×5, docker-compose, github-actions; minor+patch grouped per directory; docker majors ignored); `DOCKER_BUILD_RECORD_UPLOAD: false`. With the warm layer cache the image jobs went from 2m17s-3m6s to 49s-1m45s |
+| 2.5 | (this commit) | README "CI/CD" section + badge, CLAUDE.md CI paragraph, roadmap done, this file's plain-language section |
+| 2.6 | next commit | skill `ci-conventions` |
+
+Still open after the merge (run order 22-24): check Docker Hub tags, pull + run one image, branch
+protection on `dev-branch`, Dependabot alerts. The results go into the first commit of Phase 3.
