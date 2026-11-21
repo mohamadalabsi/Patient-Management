@@ -1,0 +1,93 @@
+# -----------------------------------------------------------------------------
+# PHASE 2 (step 2.4): NEW - Dependabot version updates.
+#
+# GitHub reads this file and, once a week, checks every listed "package
+# ecosystem" for newer versions. For each update it opens a PULL REQUEST into
+# dev-branch; our CI (ci.yml) then tests it like any other PR. You review and
+# merge (or close) it. Nothing is ever merged automatically.
+#
+# Rules used in every entry:
+#   target-branch: dev-branch  -> PRs go where our work goes, never straight to master
+#   schedule weekly (Monday)   -> one batch per week instead of PRs every day
+#   groups minor-and-patch     -> all minor/patch bumps of ONE directory in ONE PR
+#                                 (with "directories", groups are formed per
+#                                 directory = per service). Major updates still
+#                                 come one PR each: they can break things and
+#                                 deserve their own review.
+# -----------------------------------------------------------------------------
+version: 2
+
+updates:
+  # Java libraries and Maven plugins of each pom.xml (Spring Boot, gRPC,
+  # protobuf, springdoc, Testcontainers, JaCoCo ...). Also fixes the HIGH
+  # findings Trivy reports (e.g. grpc-netty-shaded, guava).
+  - package-ecosystem: maven
+    directories:
+      - /patient-service
+      - /billing-service
+      - /analytics-service
+      - /auth-service
+      - /api-gateway
+      - /Integration-tests
+    target-branch: dev-branch
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # Base images in the Dockerfiles (FROM maven:..., FROM eclipse-temurin:...).
+  # Most CVEs in an image's OS packages are fixed by a newer base image.
+  # Major updates are ignored: a new Java major (21 -> 25) is a deliberate
+  # project decision, not a weekly chore.
+  - package-ecosystem: docker
+    directories:
+      - /patient-service
+      - /billing-service
+      - /analytics-service
+      - /auth-service
+      - /api-gateway
+    target-branch: dev-branch
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # Images used directly in docker-compose.yml (postgres:16, apache/kafka:4.3.2).
+  - package-ecosystem: docker-compose
+    directory: /
+    target-branch: dev-branch
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # The actions in .github/workflows. Dependabot understands our SHA pins: it
+  # replaces the commit SHA AND updates the "# vX.Y.Z" comment next to it.
+  # All action updates come in one grouped PR.
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev-branch
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns: ["*"]

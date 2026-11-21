@@ -314,6 +314,10 @@ jobs:
     # never log in (PRs from forks do not even receive the secrets).
     env:
       PUBLISH: ${{ github.event_name == 'push' }}
+      # PHASE 2 (step 2.4): build-push-action uploads a "build record" (*.dockerbuild,
+      # for Docker Desktop's Builds view) as an artifact on every build. We do not use
+      # it, it only cluttered the artifact list; the build summary on the run page stays.
+      DOCKER_BUILD_RECORD_UPLOAD: false
     steps:
       - name: Check out the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
