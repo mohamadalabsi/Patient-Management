@@ -6,10 +6,11 @@
 # unless one "needs" another. A job is a list of STEPS: shell commands (run:)
 # or reusable building blocks (uses: owner/action).
 #
-# Jobs in this file (more are added in step 2.3):
+# Jobs in this file:
 #   changes    -> which services changed?             (seconds)
 #   test       -> mvn verify, once per changed service (in parallel)
 #   e2e        -> whole stack in Docker Compose + Integration-tests (step 2.2)
+#   images     -> build + scan each changed image; push to Docker Hub after a merge (step 2.3)
 #   ci-result  -> ONE summary check, used later by branch protection
 #
 # Third-party actions are pinned to a full commit SHA, with the version as a
@@ -292,6 +293,141 @@ jobs:
         run: docker compose --env-file "$RUNNER_TEMP/e2e.env" down -v
 
   # ---------------------------------------------------------------------------
+  # PHASE 2 (step 2.3): NEW - container images for every changed service.
+  #   pull request -> build + scan only (proves the image builds and is clean)
+  #   push to dev-branch / master (= a merged PR) -> build + scan + PUSH
+  # It runs only after test AND e2e passed, so only tested code is published.
+  # ---------------------------------------------------------------------------
+  images:
+    name: Image ${{ matrix.service }}
+    needs: [changes, test, e2e]
+    # No status function in the expression = GitHub adds success(): every
+    # needed job must have succeeded.
+    if: needs.changes.outputs.services != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    # true only for a push to dev-branch/master. Pull requests never push and
+    # never log in (PRs from forks do not even receive the secrets).
+    env:
+      PUBLISH: ${{ github.event_name == 'push' }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same build context as in docker-compose.yml: services that compile the
+      # shared proto/ contracts are built from the repo root, the others from
+      # their own folder.
+      - name: Choose the build context
+        id: ctx
+        run: |
+          case "${{ matrix.service }}" in
+            patient-service|billing-service|analytics-service) echo "context=." >> "$GITHUB_OUTPUT" ;;
+            *) echo "context=${{ matrix.service }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # Buildx = Docker's BuildKit builder. Needed for the "gha" layer cache below.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Image name and tags, computed from the git event:
+      #   sha-<7 chars>  always   -> immutable: exactly this commit, never moved
+      #   dev            on dev-branch -> "newest tested dev build" (moves)
+      #   latest         on master     -> "newest release" (moves)
+      # flavor latest=false: no automatic "latest" - only the rule above sets it.
+      # Labels (org.opencontainers.image.*) record repo, commit and build time.
+      - name: Compute image name and tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/pm-${{ matrix.service }}
+          flavor: |
+            latest=false
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev-branch' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
+
+      # 1st build: load the image into the runner's Docker (not pushed yet) so
+      # Trivy can scan it. cache-to/from type=gha keeps BuildKit's layers in
+      # GitHub's cache, one scope per service: unchanged layers (base image,
+      # Maven dependencies) are not rebuilt next time. mode=max also caches the
+      # layers of the build stage, not only those of the final image.
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.ctx.outputs.context }}
+          file: ${{ matrix.service }}/Dockerfile
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+
+      # Trivy = open-source vulnerability scanner (Aqua Security). It lists the
+      # OS packages (Alpine) and Java libraries in the image and checks them
+      # against vulnerability databases.
+      # a) report: every HIGH/CRITICAL finding in the log, never fails.
+      - name: Scan the image (report HIGH and CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: '0'
+
+      # b) gate: fail the job (and so block the push) on a CRITICAL finding that
+      #    already has a fixed version. Unfixable ones (ignore-unfixed) cannot be
+      #    solved by us today, so they only appear in the report above.
+      - name: Scan the image (fail on fixable CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'
+          skip-setup-trivy: true     # Trivy is already installed by the step above
+
+      # Only after a merge. The token (not the password) has Read & Write scope only.
+      - name: Log in to Docker Hub
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 2nd "build" = push. Every layer comes from the cache of the 1st build,
+      # so this only uploads - the scanned image and the pushed image are the same.
+      - name: Push the image to Docker Hub
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.ctx.outputs.context }}
+          file: ${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+
+      - name: Image summary
+        if: always()
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### Image ${{ matrix.service }}"
+            if [ "$PUBLISH" = "true" ]; then echo "Pushed:"; else echo "Built and scanned (not pushed - pull request):"; fi
+            for tag in $TAGS; do printf -- '- %s\n' "$tag"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
   # One summary check. With path filters, the "Test xyz" jobs exist only when xyz
   # changed, so branch protection cannot require them by name. It requires this
   # job instead: red if any job it needs failed or was cancelled; skipped
@@ -300,8 +436,10 @@ jobs:
   ci-result:
     name: CI result
     # PHASE 2 (step 2.2): e2e added to the jobs this check depends on.
+    # PHASE 2 (step 2.3): images added as well.
     # PHASE 2 (old): needs: [changes, test]
-    needs: [changes, test, e2e]
+    # PHASE 2 (old): needs: [changes, test, e2e]
+    needs: [changes, test, e2e, images]
     if: always()                     # run even when a needed job failed - that is the point
     runs-on: ubuntu-24.04
     timeout-minutes: 5
