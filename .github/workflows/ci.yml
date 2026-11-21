@@ -6,9 +6,10 @@
 # unless one "needs" another. A job is a list of STEPS: shell commands (run:)
 # or reusable building blocks (uses: owner/action).
 #
-# Jobs in this file (more are added in steps 2.2 and 2.3):
+# Jobs in this file (more are added in step 2.3):
 #   changes    -> which services changed?             (seconds)
 #   test       -> mvn verify, once per changed service (in parallel)
+#   e2e        -> whole stack in Docker Compose + Integration-tests (step 2.2)
 #   ci-result  -> ONE summary check, used later by branch protection
 #
 # Third-party actions are pinned to a full commit SHA, with the version as a
@@ -52,6 +53,8 @@ jobs:
       pull-requests: read            # paths-filter asks the PR API for the changed files
     outputs:
       services: ${{ steps.result.outputs.services }}
+      # PHASE 2 (step 2.2): 'true' when the end-to-end job must run
+      e2e: ${{ steps.result.outputs.e2e }}
     steps:
       - name: Check out the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -87,6 +90,24 @@ jobs:
               - 'api-gateway/**'
               - '.github/workflows/ci.yml'
 
+      # PHASE 2 (step 2.2): a SEPARATE filter for the e2e job. It cannot live in the
+      # filter above, because every filter name there becomes a matrix entry of
+      # "test" (and there is no service called "e2e"). The stack is affected by any
+      # service, the contracts, the compose file and the E2E tests themselves.
+      - name: Does the end-to-end stack need a run?
+        id: e2e
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            stack:
+              - '*-service/**'
+              - 'api-gateway/**'
+              - 'proto/**'
+              - 'docker-compose.yml'
+              - 'Integration-tests/**'
+              - '.github/workflows/ci.yml'
+
       # "changes" = JSON list of the filter names that matched.
       # Started by hand (workflow_dispatch) there is nothing to compare, so: all services.
       - name: Build the list of services to test
@@ -94,11 +115,14 @@ jobs:
         env:
           ALL: '["patient-service","billing-service","analytics-service","auth-service","api-gateway"]'
           CHANGED: ${{ steps.filter.outputs.changes }}
+          STACK: ${{ steps.e2e.outputs.stack }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "services=$ALL" >> "$GITHUB_OUTPUT"
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
           else
             echo "services=${CHANGED:-[]}" >> "$GITHUB_OUTPUT"
+            echo "e2e=${STACK:-false}" >> "$GITHUB_OUTPUT"
           fi
 
   # ---------------------------------------------------------------------------
@@ -169,6 +193,105 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------------
+  # PHASE 2 (step 2.2): NEW - end-to-end tests against the REAL stack.
+  # The per-service tests above replace other services with fakes; only this job
+  # proves that they fit together: gateway -> auth -> patient -> billing (gRPC)
+  # -> Kafka. Same docker-compose.yml as on your machine, same Integration-tests.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: End-to-end tests
+    needs: [changes, test]
+    # Run when the stack is affected AND no service test failed. "!cancelled()"
+    # is needed because "test" may be SKIPPED (e.g. only Integration-tests or
+    # docker-compose.yml changed) - by default a skipped "need" skips this job too.
+    if: >-
+      !cancelled()
+      && needs.changes.outputs.e2e == 'true'
+      && needs.test.result != 'failure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # Own compose project name -> own containers/volumes (pm-e2e_*), so
+      # "down -v" can never touch the volumes of a normal "docker compose up".
+      COMPOSE_PROJECT_NAME: pm-e2e
+    # The throwaway env file lives in $RUNNER_TEMP (the runner's temp folder, set
+    # by GitHub on every machine), not in the repo.
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # docker-compose.yml requires these variables (${VAR:?}). In CI they are
+      # generated fresh for every run: random passwords, random JWT secret (base64
+      # of 48 random bytes - JwtUtil base64-decodes it and needs >= 32 bytes).
+      # Nothing secret is stored in GitHub; the values die with the runner.
+      # ::add-mask:: hides the values if they ever appear in the log.
+      - name: Generate a throwaway .env for the stack
+        run: |
+          patient_pw=$(openssl rand -hex 16)
+          auth_pw=$(openssl rand -hex 16)
+          jwt=$(openssl rand -base64 48 | tr -d '\n')
+          echo "::add-mask::$patient_pw"; echo "::add-mask::$auth_pw"; echo "::add-mask::$jwt"
+          cat > "$RUNNER_TEMP/e2e.env" <<EOF
+          PATIENT_DB_NAME=patientdb
+          PATIENT_DB_USER=patient
+          PATIENT_DB_PASSWORD=$patient_pw
+          AUTH_DB_NAME=authdb
+          AUTH_DB_USER=auth
+          AUTH_DB_PASSWORD=$auth_pw
+          JWT_SECRET=$jwt
+          EOF
+
+      # --build : build all 5 images from source (multi-stage Dockerfiles)
+      # --wait  : return only when EVERY container is healthy (our readiness
+      #           healthchecks), or fail if one becomes unhealthy / the timeout passes.
+      #           So no "sleep 60" and no guessing when the stack is ready.
+      - name: Start the stack (build + wait until healthy)
+        run: docker compose --env-file "$RUNNER_TEMP/e2e.env" up -d --build --wait --wait-timeout 300
+
+      # Java + Maven for Integration-tests (it has no mvnw; the runner image comes
+      # with Maven preinstalled). cache: maven keeps its libraries between runs.
+      - name: Set up Java 21
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: Integration-tests/pom.xml
+
+      # REST Assured tests through the gateway, exactly like a client. Port 4004 is
+      # published by compose, so localhost works on the runner.
+      - name: Run Integration-tests
+        working-directory: Integration-tests
+        run: mvn -B test -Dgateway.url=http://localhost:4004
+
+      # Only when something failed: state + logs of every container, the first
+      # place to look ("which service died, and why?").
+      - name: Collect container logs
+        if: failure()
+        run: |
+          docker compose --env-file "$RUNNER_TEMP/e2e.env" ps -a
+          docker compose --env-file "$RUNNER_TEMP/e2e.env" logs --no-color --timestamps > "$RUNNER_TEMP/compose-logs.txt"
+
+      - name: Upload E2E reports and container logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-e2e
+          path: |
+            Integration-tests/target/surefire-reports/
+            ${{ runner.temp }}/compose-logs.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Always clean up (containers + the pm-e2e volumes). On GitHub the machine is
+      # thrown away anyway; the step matters on self-hosted runners and locally.
+      - name: Stop the stack
+        if: always()
+        run: docker compose --env-file "$RUNNER_TEMP/e2e.env" down -v
+
+  # ---------------------------------------------------------------------------
   # One summary check. With path filters, the "Test xyz" jobs exist only when xyz
   # changed, so branch protection cannot require them by name. It requires this
   # job instead: red if any job it needs failed or was cancelled; skipped
@@ -176,7 +299,9 @@ jobs:
   # ---------------------------------------------------------------------------
   ci-result:
     name: CI result
-    needs: [changes, test]
+    # PHASE 2 (step 2.2): e2e added to the jobs this check depends on.
+    # PHASE 2 (old): needs: [changes, test]
+    needs: [changes, test, e2e]
     if: always()                     # run even when a needed job failed - that is the point
     runs-on: ubuntu-24.04
     timeout-minutes: 5
