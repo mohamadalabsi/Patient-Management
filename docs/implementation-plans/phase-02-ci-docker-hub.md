@@ -13,8 +13,7 @@ You should understand the whole phase from this file alone, without opening the 
 The **Technology map** says which tools are used and why. **Steps** says, for every step, *what* is done,
 *why*, *how*, *when* you would use the same technique elsewhere, and *how it is verified*.
 In the workflow YAML every job and every step gets a `# PHASE 2 (step 2.x)` comment.
-**"What you need to do"** lists the things only you can do (accounts, tokens, GitHub settings), and
-**"Run order"** says exactly who does what, in which order, from approval to merge.
+**"What you need to do"** lists the things only you can do (accounts, tokens, GitHub settings).
 
 ## CI/CD in plain words (read this first)
 
@@ -163,39 +162,6 @@ Only you can do these. I will remind you at the step that needs each one.
 Nothing else is needed: the end-to-end job generates throwaway database passwords and a JWT secret
 inside the CI run, so no `.env` values go to GitHub.
 
-## Run order - who does what
-
-The exact order of the phase. **You** = the developer, **Claude** = me. I stop at every "You" line
-and wait until you tell me it is done.
-
-| # | Who | What |
-|---|---|---|
-| 1 | You | Read this plan and approve it (or ask for changes). |
-| 2 | You | *Optional, makes 4-17 easier:* install the GitHub CLI (`sudo apt install gh`, then `! gh auth login`) so I can read CI runs and logs myself. Without it I read the run status through GitHub's public API, and you paste the log of a failing step. |
-| 3 | Claude | **Step 2.1**: write `.github/workflows/ci.yml` (jobs `changes` + `test`), JaCoCo in the 5 POMs, make `mvnw` executable. Check locally that `mvn verify` produces the coverage report. Commit. |
-| 4 | You | Push the branch: `git push -u origin feature/phase-02-ci-docker-hub`. |
-| 5 | You | Open a **draft pull request** `feature/phase-02-ci-docker-hub` -> `dev-branch` on GitHub. From now on, every push to the branch runs CI on that PR. |
-| 6 | Claude | Read the run together with you: which jobs ran, were they green, how long they took. If something fails: fix, commit, back to 4 (push only). |
-| 7 | Claude | Prove the check works: a temporary commit that breaks one test. |
-| 8 | You | Push. The PR check must turn **red**. |
-| 9 | Claude | Revert the temporary commit (`git revert`, so history shows the experiment). |
-| 10 | You | Push. Green again. |
-| 11 | Claude | **Step 2.2**: add the `e2e` job (compose stack with a generated `.env`, `Integration-tests`, logs on failure). Commit. |
-| 12 | You | Push. |
-| 13 | Claude | Read the run (e2e green, runtime noted). Fix and repeat 12 if needed. |
-| 14 | You | **Docker Hub**: create the access token (Read & Write). Optional: create the 5 repositories if they should be private. |
-| 15 | You | **GitHub**: add the secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. Tell me "secrets done". |
-| 16 | Claude | **Step 2.3**: add the `images` job (build, Trivy, push only after a merge) and layered jars in the 5 Dockerfiles. Check locally: `docker compose up --build` still healthy, E2E still green. Commit. |
-| 17 | You | Push. On the PR the images are **built and scanned but not pushed**; I read the Trivy result with you. |
-| 18 | Claude | **Step 2.4**: `.github/dependabot.yml`. Commit. |
-| 19 | Claude | **Step 2.5**: docs (README CI/CD, CLAUDE.md, roadmap, this file's "What changed"). Commit. |
-| 20 | Claude | **Step 2.6**: skill `ci-conventions`. Commit. Report the phase as finished. |
-| 21 | You | Push. Mark the PR "Ready for review", check that all checks are green, merge into `dev-branch`. |
-| 22 | You | The merge is a push to `dev-branch`, so the `images` job now runs for real. Check Docker Hub: the changed services have tags `sha-<commit>` and `dev`. Tell me. |
-| 23 | Claude | Verify one image: `docker pull` + `docker run`, and look at its layers. (These results go into the first commit of Phase 3, because this branch is already merged.) |
-| 24 | You | Protect `dev-branch` (Settings -> Branches: require the CI checks) and turn on Dependabot alerts (Settings -> Code security). |
-| 25 | You | Create the Phase 3 branch from `dev-branch`. |
-
 ## Technology map
 
 | Technology | What it is | Why we use it here | Steps |
@@ -325,7 +291,7 @@ actions, scanning, updates; B1 = GitHub Actions + Maven + Docker Hub as in this 
 - [x] A PR runs only the jobs of the changed services; all green (in this PR all 5 run, because `ci.yml` and all POMs changed - the filter compares the whole PR with `dev-branch`)
 - [x] A broken test turns the PR check red
 - [x] E2E tests run in CI against the compose stack, with logs attached on failure (failure path checked locally)
-- [ ] After a merge into `dev-branch`, Docker Hub has `sha-<commit>` and `dev` tags for the changed services (checked after the merge, run order 22)
+- [ ] After a merge into `dev-branch`, Docker Hub has `sha-<commit>` and `dev` tags for the changed services (checked after the merge)
 - [x] Trivy runs before every push; no image with a fixable critical CVE is published
 - [x] No secret appears in the repo or in the logs
 - [x] Dependabot config is valid (schema-checked; GitHub shows it once it is on `master`)
@@ -354,7 +320,7 @@ actions, scanning, updates; B1 = GitHub Actions + Maven + Docker Hub as in this 
 
 | Step | Commit | Result |
 |---|---|---|
-| plan | `0eb916c`, `62c6f30` | this file; run-order table added, rule added to CLAUDE.md |
+| plan | `0eb916c`, `62c6f30` | this file (a "run order - who does what" table was added in `62c6f30` and removed again after the phase) |
 | 2.1 | `7164c58` | `ci.yml` with `changes` -> `test` matrix -> `ci-result`; JaCoCo in 5 POMs; `mvnw` executable. First run: Testcontainers worked on the runner unchanged; api-gateway failed once downloading Maven (network glitch on the very first run, green on re-run). Runtimes: patient 1m40s, auth 1m, others ~45s |
 | 2.1 (fix, reverted) | `cb2f4b8` -> `7bb0fb7` | added an `actions/cache` for `~/.m2/wrapper`; the next run's log showed `setup-java` v6 **already caches the Maven wrapper**, so the step was a duplicate (and printed "Failed to save" in 4 jobs) - reverted. Lesson: read the log of a run before adding a fix |
 | 2.1 (proof) | `b980130` -> `17e4b63` | temporary wrong assertion in `PatientMapperTest`: `Test patient-service` and `CI result` red (`expected: "Anna Broken" but was: "Anna Test"`), reports still uploaded; reverted, green again |
@@ -362,7 +328,7 @@ actions, scanning, updates; B1 = GitHub Actions + Maven + Docker Hub as in this 
 | 2.3 | `47be382` | `images` job (Buildx, gha cache, metadata tags, Trivy report + gate, push only on push events); layered jars in 5 Dockerfiles (without `--launcher`, see step 2.3). patient: app layer 94 kB vs 106 MB dependencies. Trivy: 0 CRITICAL; 10 HIGH with fixes - `grpc-netty-shaded` 1.69 (pinned by hand), `guava`, `lz4-java`, `snappy-java` (via kafka-clients) - left for Dependabot |
 | 2.4 | `781599e` | `dependabot.yml` (maven ×6 dirs, docker ×5, docker-compose, github-actions; minor+patch grouped per directory; docker majors ignored); `DOCKER_BUILD_RECORD_UPLOAD: false`. With the warm layer cache the image jobs went from 2m17s-3m6s to 49s-1m45s |
 | 2.5 | (this commit) | README "CI/CD" section + badge, CLAUDE.md CI paragraph, roadmap done, this file's plain-language section |
-| 2.6 | next commit | skill `ci-conventions` |
+| 2.6 | `fb827bd` | skill `ci-conventions` |
 
-Still open after the merge (run order 22-24): check Docker Hub tags, pull + run one image, branch
+Still open after the merge: check Docker Hub tags, pull + run one image, branch
 protection on `dev-branch`, Dependabot alerts. The results go into the first commit of Phase 3.
