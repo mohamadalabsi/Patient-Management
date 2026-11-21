@@ -32,9 +32,7 @@ class PatientMapperTest {
 
         // id stays null: the DATABASE generates it on insert, never the client
         assertThat(patient.getId()).isNull();
-        // PHASE 2 (temporary, run order line 7): deliberately WRONG expected value to
-        // prove that a failing test turns the PR check red. Reverted in the next commit.
-        assertThat(patient.getName()).isEqualTo("Anna Broken");
+        assertThat(patient.getName()).isEqualTo("Anna Test");
         assertThat(patient.getEmail()).isEqualTo("anna@example.com");
         assertThat(patient.getAddress()).isEqualTo("Main Street 1");
         assertThat(patient.getBirthDate()).isEqualTo(LocalDate.of(1990, 1, 15));
