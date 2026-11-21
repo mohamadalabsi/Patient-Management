@@ -41,3 +41,4 @@ equivalent tools in other stacks (Node.js, Python, Go).
 |---|---|
 | 0 - fixes & foundation | `skills/service-conventions` - code style, service structure, API, DB, messaging, Docker |
 | 1 - testing safety net | `skills/testing-conventions` - which test for which change, Testcontainers, fakes, naming, Maven setup, how to run |
+| 2 - CI + Docker Hub | `skills/ci-conventions` - pipeline order, path filters, e2e in CI, immutable image tags, scanning, secrets, pinned actions, Dependabot |
