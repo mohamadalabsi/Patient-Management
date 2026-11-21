@@ -135,20 +135,6 @@ jobs:
           cache: maven
           cache-dependency-path: ${{ matrix.service }}/pom.xml
 
-      # PHASE 2 (step 2.1, fix after the first run): cache the Maven program itself.
-      # ./mvnw does not contain Maven - it downloads it from Maven Central into
-      # ~/.m2/wrapper on first use, and every job starts on a fresh machine, so that
-      # was a download on EVERY run (setup-java above only caches ~/.m2/repository).
-      # In the first CI run that download failed once (network glitch) and turned
-      # api-gateway red without any code problem. With this cache Maven is
-      # downloaded only when the cache is empty or the wrapper version changes:
-      # the key contains a hash of maven-wrapper.properties (which holds the URL/version).
-      - name: Cache the Maven distribution used by mvnw
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.m2/wrapper
-          key: maven-wrapper-${{ hashFiles(format('{0}/.mvn/wrapper/maven-wrapper.properties', matrix.service)) }}
-
       # verify = compile, unit + Testcontainers tests (surefire), JaCoCo report.
       # The runner has a normal Docker daemon, so Testcontainers starts Postgres/Kafka
       # directly - no socket mount or TESTCONTAINERS_HOST_OVERRIDE as in mvn-test.sh.
