@@ -208,6 +208,43 @@
                     <argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>
                 </configuration>
             </plugin>
+            <!--
+                PHASE 2 (step 2.1): NEW - JaCoCo test coverage report.
+                - prepare-agent (before the tests): sets the Maven property argLine to
+                  "-javaagent:jacoco.jar=...". Surefire's @{argLine} above (prepared in
+                  Phase 1) inserts it, so JaCoCo and Mockito agents both run.
+                - report (phase verify, i.e. "mvn verify"): writes
+                  target/site/jacoco/index.html (for people) and jacoco.xml (for tools).
+                Report only - no minimum %, so it never fails the build (a gate comes later).
+                Classes generated from proto/ (packages billing, patient.events) are
+                excluded: they are not our code, and would distort the numbers.
+            -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.16</version>
+                <configuration>
+                    <excludes>
+                        <exclude>billing/**</exclude>
+                        <exclude>patient/events/**</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
