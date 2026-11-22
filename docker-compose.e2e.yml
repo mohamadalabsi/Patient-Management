@@ -55,3 +55,18 @@ services:
     environment:
       AUTH0_ISSUER_URI: http://mock-oauth2-server:8080/default
       AUTH0_AUDIENCE: https://api.patient-management.local
+      # PHASE 3 (step 3.3): patient-service gets its service token from the mock too.
+      # The mock accepts any secret; client_id "patient-service" decides the claims
+      # (create:billing-accounts) - see Integration-tests/mock-issuer/*.json.
+      AUTH0_TOKEN_URI: http://mock-oauth2-server:8080/default/token
+      PATIENT_SERVICE_CLIENT_ID: patient-service
+      PATIENT_SERVICE_CLIENT_SECRET: not-checked-by-the-mock
+
+  # PHASE 3 (step 3.3): billing verifies the service token -> same fake issuer.
+  billing-service:
+    depends_on:
+      mock-oauth2-server:
+        condition: service_started
+    environment:
+      AUTH0_ISSUER_URI: http://mock-oauth2-server:8080/default
+      AUTH0_AUDIENCE: https://api.patient-management.local

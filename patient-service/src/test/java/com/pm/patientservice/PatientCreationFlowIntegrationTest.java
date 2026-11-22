@@ -2,6 +2,7 @@ package com.pm.patientservice;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.pm.patientservice.grpc.FakeBillingServer;
+import com.pm.patientservice.grpc.FakeTokenEndpoint;
 import com.pm.patientservice.repository.PatientRepo;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -82,12 +83,17 @@ class PatientCreationFlowIntegrationTest {
     private static final Duration SLOW_BILLING = Duration.ofSeconds(10);
     private static final FakeBillingServer BILLING = new FakeBillingServer(SLOW_BILLING.toMillis()).start();
 
+    // PHASE 3 (step 3.3): NEW - plays Auth0's token endpoint for patient-service's own token
+    private static final FakeTokenEndpoint TOKENS = new FakeTokenEndpoint().start();
+
     /** Points BillingServiceGrpcClient at the fake server (properties computed at runtime). */
     @DynamicPropertySource
     static void billingProperties(DynamicPropertyRegistry registry) {
         registry.add("billing.service.address", () -> "localhost");
         registry.add("billing.service.port", BILLING::port);
         registry.add("billing.service.deadline", BILLING_DEADLINE::toString);
+        // PHASE 3 (step 3.3): patient-service asks THIS endpoint for its service token
+        registry.add("AUTH0_TOKEN_URI", TOKENS::tokenUri);
     }
 
     @Autowired
@@ -140,6 +146,36 @@ class PatientCreationFlowIntegrationTest {
         PatientEvent event = PatientEvent.parseFrom(events.getFirst().value());
         assertThat(event.getPatientId()).isEqualTo(id);
         assertThat(event.getEventType()).isEqualTo("PATIENT_CREATED");
+    }
+
+    /**
+     * PHASE 3 (step 3.3): NEW - the service-to-service token, end to end inside the JVM:
+     *   POST /patients -> PatientService -> BillingServiceGrpcClient
+     *     -> ServiceTokenProvider asks the (fake) token endpoint with client credentials
+     *     -> gRPC call to (fake) billing carries "authorization: Bearer <that token>"
+     * and the token is REUSED for the next patient (no second token request).
+     */
+    @Test
+    void billingCallCarriesTheServiceTokenWhichIsCached() throws Exception {
+        mockMvc.perform(post("/patients").contentType(MediaType.APPLICATION_JSON).content(json(uniqueEmail())))
+                .andExpect(status().isCreated());
+        int tokenRequestsAfterFirstPatient = TOKENS.requests().size();
+
+        mockMvc.perform(post("/patients").contentType(MediaType.APPLICATION_JSON).content(json(uniqueEmail())))
+                .andExpect(status().isCreated());
+
+        // billing received the token on its calls
+        assertThat(BILLING.authorizations()).isNotEmpty()
+                .allMatch(("Bearer " + FakeTokenEndpoint.TOKEN)::equals);
+        // what patient-service asked the token endpoint for
+        assertThat(TOKENS.requests()).first().satisfies(form -> {
+            assertThat(form).containsEntry("grant_type", "client_credentials");
+            assertThat(form).containsEntry("client_id", "test-patient-service");
+            assertThat(form).containsEntry("audience", "https://api.patient-management.local");
+        });
+        // caching: the second patient did not trigger a new token request
+        assertThat(tokenRequestsAfterFirstPatient).isEqualTo(1);
+        assertThat(TOKENS.requests()).hasSize(1);
     }
 
     @Test

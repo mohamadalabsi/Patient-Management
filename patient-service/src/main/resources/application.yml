@@ -82,6 +82,32 @@ spring:
           authorities-claim-name: permissions
           authority-prefix: ""
 
+      # -------------------------------------------------------------------------
+      # PHASE 3 (step 3.3): NEW - patient-service's OWN identity at Auth0.
+      #
+      # "billing" is just a name for this client registration (used in the code:
+      # ServiceTokenProvider). client_credentials = no user, no login page: the
+      # service proves who it is with client id + secret and gets a token back.
+      #   client-id / secret: the Auth0 application "patient-service" (.env)
+      #   token-uri:          where to ask. Auth0: <tenant>/oauth/token. In the E2E
+      #                       stack AUTH0_TOKEN_URI points at the mock server.
+      #   client_secret_post: send id + secret in the form body (Auth0 accepts this)
+      # The token's permissions come from Auth0 (Application Access -> patient-service
+      # -> Client Access): only create:billing-accounts. The audience parameter Auth0
+      # needs is added in config/ServiceTokenConfig.java.
+      # -------------------------------------------------------------------------
+      client:
+        registration:
+          billing:
+            provider: auth0
+            client-id: ${PATIENT_SERVICE_CLIENT_ID}
+            client-secret: ${PATIENT_SERVICE_CLIENT_SECRET}
+            authorization-grant-type: client_credentials
+            client-authentication-method: client_secret_post
+        provider:
+          auth0:
+            token-uri: ${AUTH0_TOKEN_URI:${AUTH0_ISSUER_URI}oauth/token}
+
 server:
   port: ${SERVER_PORT:4000}
 

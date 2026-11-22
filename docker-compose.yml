@@ -59,6 +59,11 @@ services:
       # the gateway - both must trust exactly the same tokens.
       AUTH0_ISSUER_URI: ${AUTH0_ISSUER_URI:?AUTH0_ISSUER_URI is required (Auth0 tenant URL with trailing /)}
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required (Auth0 API identifier)}
+      # PHASE 3 (step 3.3): NEW - patient-service's OWN identity (Auth0 application
+      # "patient-service", Machine to Machine, only create:billing-accounts). With these
+      # it gets a token from Auth0 and sends it on every gRPC call to billing.
+      PATIENT_SERVICE_CLIENT_ID: ${PATIENT_SERVICE_CLIENT_ID:?PATIENT_SERVICE_CLIENT_ID is required (Auth0 app patient-service)}
+      PATIENT_SERVICE_CLIENT_SECRET: ${PATIENT_SERVICE_CLIENT_SECRET:?PATIENT_SERVICE_CLIENT_SECRET is required (Auth0 app patient-service)}
 
   billing-service:
     container_name: billing-service
@@ -86,6 +91,11 @@ services:
     ports:
       - "4002:4002"
       - "9001:9001"
+    # PHASE 3 (step 3.3): NEW - billing verifies the token on every gRPC call
+    # (BearerTokenInterceptor). Same issuer/audience as the other services.
+    environment:
+      AUTH0_ISSUER_URI: ${AUTH0_ISSUER_URI:?AUTH0_ISSUER_URI is required (Auth0 tenant URL with trailing /)}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required (Auth0 API identifier)}
 
   analytics-service:
     container_name: analytics-service

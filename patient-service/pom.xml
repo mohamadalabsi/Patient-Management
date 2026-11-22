@@ -101,6 +101,18 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
         </dependency>
+        <!--
+            PHASE 3 (step 3.3): NEW - OAuth2 CLIENT: the opposite direction.
+              resource server (above) = ACCEPTS tokens from callers
+              client (this)           = GETS its own token from Auth0
+            patient-service uses it to get a "service token" (client credentials grant)
+            for its gRPC call to billing-service. It also caches the token until shortly
+            before it expires, so Auth0 is not asked on every new patient.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-client</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>

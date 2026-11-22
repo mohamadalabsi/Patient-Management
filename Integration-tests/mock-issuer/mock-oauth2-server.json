@@ -47,6 +47,19 @@
               "delete:patients"
             ]
           }
+        },
+        {
+          "requestParam": "client_id",
+          "match": "patient-service",
+          "claims": {
+            "sub": "patient-service@clients",
+            "aud": [
+              "https://api.patient-management.local"
+            ],
+            "permissions": [
+              "create:billing-accounts"
+            ]
+          }
         }
       ]
     }

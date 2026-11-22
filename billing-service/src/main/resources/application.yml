@@ -1,6 +1,18 @@
 spring:
   application:
     name: billing-service
+  # ---------------------------------------------------------------------------
+  # PHASE 3 (step 3.3): NEW - which tokens billing accepts on its gRPC API.
+  # Same issuer and audience as the gateway and patient-service: one Auth0 API,
+  # all our services trust the same tokens. Which PERMISSION a gRPC method needs
+  # is decided in grpc/BearerTokenInterceptor.java (create:billing-accounts).
+  # ---------------------------------------------------------------------------
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${AUTH0_ISSUER_URI}
+          audiences: ${AUTH0_AUDIENCE}
 
 server:
   port: ${SERVER_PORT:4002}
