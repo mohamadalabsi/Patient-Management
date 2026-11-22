@@ -45,6 +45,7 @@ final class E2E {
      * What the token contains (audience, permissions) depends on the client id - see
      * Integration-tests/mock-issuer/mock-oauth2-server.json:
      *   "e2e-client"    -> our API's audience, all patient permissions
+     *   "e2e-reader"    -> our API's audience, only read:patients (PHASE 3, step 3.2)
      *   "e2e-other-api" -> a DIFFERENT audience (the gateway must reject it)
      */
     static String token(String clientId) {

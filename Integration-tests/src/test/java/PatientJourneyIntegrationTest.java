@@ -124,6 +124,26 @@ class PatientJourneyIntegrationTest {
     }
 
     /**
+     * PHASE 3 (step 3.2): NEW - the token is valid (the gateway lets it through), but it
+     * only has read:patients. patient-service checks the permission itself -> reading
+     * works, creating is 403. Proves the second check behind the gateway.
+     */
+    @Test
+    void readOnlyTokenCanListButNotCreate() {
+        String readOnly = E2E.token("e2e-reader");
+
+        given().header("Authorization", "Bearer " + readOnly)
+                .when().get("/api/patients?page=0&size=1")
+                .then().statusCode(200);
+
+        given().header("Authorization", "Bearer " + readOnly).contentType("application/json")
+                .body(E2E.patientJson(E2E.uniqueEmail()))
+                .when().post("/api/patients")
+                .then().statusCode(403)
+                .contentType(startsWith("application/problem+json"));
+    }
+
+    /**
      * PHASE 3 (step 3.1): NEW - a REAL token from the same issuer, correctly signed, but
      * issued for another API ("aud"). The gateway's audience check must reject it.
      */

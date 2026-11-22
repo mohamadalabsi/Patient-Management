@@ -16,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -54,10 +55,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * "PatientCreationFlowIT" - the usual suffix for the separate Failsafe plugin - and was
  * silently NOT run by "mvn test". The name keeps one simple "mvn test" for everything;
  * "Integration" tells the reader "slower, needs Docker".
+ *
+ * PHASE 3 (step 3.2): the endpoints now need permissions. @WithMockUser puts a caller with
+ * these authorities into the security context of every test, so this class keeps testing
+ * the creation FLOW. Tokens and permission rules are tested in PatientSecurityTest.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
+@WithMockUser(authorities = {"read:patients", "write:patients", "delete:patients"})
 class PatientCreationFlowIntegrationTest {
 
     /**

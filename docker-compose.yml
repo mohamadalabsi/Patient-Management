@@ -54,6 +54,11 @@ services:
       # (Spring Duration format: 3s, 500ms ...). Bound to billing.service.deadline.
       BILLING_SERVICE_DEADLINE: 3s
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # PHASE 3 (step 3.2): NEW - patient-service checks the token AGAIN (it may be
+      # reached without the gateway) plus the permissions. Same issuer/audience as
+      # the gateway - both must trust exactly the same tokens.
+      AUTH0_ISSUER_URI: ${AUTH0_ISSUER_URI:?AUTH0_ISSUER_URI is required (Auth0 tenant URL with trailing /)}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required (Auth0 API identifier)}
 
   billing-service:
     container_name: billing-service
