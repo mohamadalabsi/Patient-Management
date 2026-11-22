@@ -1,5 +1,7 @@
 # Patient Management System
 
+[![CI](https://github.com/mohamadalabsi/Patient-Management/actions/workflows/ci.yml/badge.svg?branch=dev-branch)](https://github.com/mohamadalabsi/Patient-Management/actions/workflows/ci.yml)
+
 A microservices-based healthcare patient management system built with Spring Boot: an API gateway, JWT authentication, gRPC between services, event-driven messaging with Kafka and Protobuf, PostgreSQL with Flyway migrations, all running locally with Docker Compose.
 
 > 📍 **Roadmap & learning plan:** [`docs/implementation-plans/roadmap.md`](docs/implementation-plans/roadmap.md) — audit findings and the phased plan (testing, CI, Auth0, reliability, observability, Kubernetes, AWS). Each phase has its own plan file in the same folder.
@@ -16,6 +18,7 @@ A microservices-based healthcare patient management system built with Spring Boo
 - [Database & Migrations](#-database--migrations)
 - [Health Checks](#-health-checks)
 - [Testing](#-testing)
+- [CI/CD](#-cicd)
 - [Configuration](#-environment-variables-and-configuration)
 - [Project Structure](#-project-structure)
 
@@ -58,6 +61,7 @@ Only the gateway (4004) is the intended entry point. patient-service and auth-se
 | Errors | RFC 9457 Problem Details |
 | Ops | Spring Boot Actuator health probes |
 | Build / Run | Maven, Docker, Docker Compose |
+| CI/CD | GitHub Actions, JaCoCo, Trivy, Docker Hub, Dependabot |
 | Testing | JUnit 5, Mockito, AssertJ, Spring test slices, **Testcontainers** (Postgres, Kafka), Awaitility, in-process gRPC, REST Assured |
 
 ## 🚀 Getting Started
@@ -224,7 +228,8 @@ mounted, so Testcontainers can start sibling containers.
 \* on a laptop with Docker Desktop, images cached; includes Maven startup and `clean`.
 
 The Dockerfiles still build with `-DskipTests`: running Testcontainers inside `docker build`
-would need Docker-in-Docker. Tests run as their own step (CI from roadmap phase 2).
+would need Docker-in-Docker. Tests run as their own step - locally with the script, in CI as the
+`test` job (see [CI/CD](#-cicd)).
 
 **2. End-to-end tests** (`Integration-tests/`, REST Assured) call the running stack through the gateway:
 
@@ -234,6 +239,49 @@ docker run --rm -v "$PWD/Integration-tests":/ws -v pm-m2-cache:/root/.m2 -w /ws 
   --add-host=host.docker.internal:host-gateway maven:3.9.9-eclipse-temurin-21 \
   mvn -B test -Dgateway.url=http://host.docker.internal:4004
 # with a local JDK:  cd Integration-tests && mvn test      (default gateway.url = http://localhost:4004)
+```
+
+## ⚙️ CI/CD
+
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) checks every pull request into
+`dev-branch` / `master` and publishes images after a merge. Plain-language explanation and all details:
+[phase-02-ci-docker-hub.md](docs/implementation-plans/phase-02-ci-docker-hub.md).
+
+```
+changes ─► test (one job per changed service) ─► e2e (whole stack) ─► images (one per service) ─► ci-result
+```
+
+| Job | What it does | Pull request | After a merge |
+|---|---|---|---|
+| `changes` | which services changed (`dorny/paths-filter`; `proto/` counts for patient, billing, analytics) | ✓ | ✓ |
+| `test` | `./mvnw -B verify` per changed service: all tests + JaCoCo coverage (summary on the run page, reports as artifacts) | ✓ | ✓ |
+| `e2e` | `docker compose up --build --wait` with a generated throwaway env file, then `Integration-tests`; container logs as artifact on failure | ✓ | ✓ |
+| `images` | build the image, Trivy scan (fails on fixable CRITICAL), **push** to Docker Hub | build + scan | build + scan + **push** |
+| `ci-result` | one summary check (red if any job failed) - the check to require in branch protection | ✓ | ✓ |
+
+**Images** are published as `docker.io/<dockerhub-user>/pm-<service>` with the tags:
+
+| Tag | Meaning |
+|---|---|
+| `sha-<7-char commit>` | exactly that commit - immutable, use it for deployments |
+| `dev` | newest build of `dev-branch` (moves) |
+| `latest` | newest build of `master` (moves) |
+
+```bash
+docker pull <dockerhub-user>/pm-patient-service:dev
+```
+
+The Dockerfiles split the Spring Boot jar into layers (libraries / our code), so a code change only
+uploads a small layer. **Dependabot** ([`.github/dependabot.yml`](.github/dependabot.yml)) opens weekly
+PRs into `dev-branch` for Maven dependencies, base images, compose images and GitHub Actions.
+
+Needed once (repository settings): the secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub
+access token with Read & Write scope). The CI database passwords and JWT secret are generated per run.
+
+To check workflow files before pushing:
+
+```bash
+docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12
 ```
 
 ## 🔐 Environment Variables and Configuration
@@ -267,6 +315,7 @@ Non-secret values set by Compose:
 
 ```
 Patient-Management/
+├── .github/              # CI workflow (workflows/ci.yml) + Dependabot config
 ├── api-gateway/          # Spring Cloud Gateway (WebFlux)
 ├── auth-service/         # Login + JWT (Flyway: db/migration, db/dev-data)
 ├── patient-service/      # Patient CRUD, gRPC client, Kafka producer (Flyway)

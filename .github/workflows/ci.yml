@@ -1,0 +1,458 @@
+# -----------------------------------------------------------------------------
+# PHASE 2 (step 2.1): NEW - the CI pipeline of the whole repo.
+#
+# A WORKFLOW reacts to EVENTS (push, pull request). It contains JOBS; every job
+# runs on a fresh Linux machine from GitHub (a RUNNER) and jobs run in parallel
+# unless one "needs" another. A job is a list of STEPS: shell commands (run:)
+# or reusable building blocks (uses: owner/action).
+#
+# Jobs in this file:
+#   changes    -> which services changed?             (seconds)
+#   test       -> mvn verify, once per changed service (in parallel)
+#   e2e        -> whole stack in Docker Compose + Integration-tests (step 2.2)
+#   images     -> build + scan each changed image; push to Docker Hub after a merge (step 2.3)
+#   ci-result  -> ONE summary check, used later by branch protection
+#
+# Third-party actions are pinned to a full commit SHA, with the version as a
+# comment. A tag like "v7" can be moved to other code by whoever controls the
+# action; a commit SHA cannot. Dependabot (step 2.4) still proposes updates.
+# -----------------------------------------------------------------------------
+name: CI
+
+on:
+  # Every pull request INTO dev-branch or master (also each new push to the PR).
+  pull_request:
+    branches: [dev-branch, master]
+  # Every push TO dev-branch or master - in our workflow that is a merged PR.
+  push:
+    branches: [dev-branch, master]
+  # A "Run workflow" button in the Actions tab, to start it by hand.
+  workflow_dispatch:
+
+# Least privilege: the automatic GITHUB_TOKEN may only READ the repository.
+# Jobs that need more ask for it themselves.
+permissions:
+  contents: read
+
+# A new push to the same PR cancels the run that is still going for the old
+# commit (its result would be outdated anyway). Runs on dev-branch / master are
+# never cancelled, so every merge is fully checked.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Which services changed? Output: a JSON list, e.g. ["billing-service"].
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect changed services
+    runs-on: ubuntu-24.04            # pinned image, not ubuntu-latest (no surprise upgrades)
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read            # paths-filter asks the PR API for the changed files
+    outputs:
+      services: ${{ steps.result.outputs.services }}
+      # PHASE 2 (step 2.2): 'true' when the end-to-end job must run
+      e2e: ${{ steps.result.outputs.e2e }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false   # do not leave the token in .git/config
+
+      # One filter per service. A filter "matches" when any changed file fits one
+      # of its patterns. The shared contracts count for the services that compile
+      # them (see each pom's <includes>). Changing this workflow file re-tests all.
+      - name: Compare changed files with the service folders
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            patient-service:
+              - 'patient-service/**'
+              - 'proto/billing_service.proto'
+              - 'proto/patient_event.proto'
+              - '.github/workflows/ci.yml'
+            billing-service:
+              - 'billing-service/**'
+              - 'proto/billing_service.proto'
+              - '.github/workflows/ci.yml'
+            analytics-service:
+              - 'analytics-service/**'
+              - 'proto/patient_event.proto'
+              - '.github/workflows/ci.yml'
+            auth-service:
+              - 'auth-service/**'
+              - '.github/workflows/ci.yml'
+            api-gateway:
+              - 'api-gateway/**'
+              - '.github/workflows/ci.yml'
+
+      # PHASE 2 (step 2.2): a SEPARATE filter for the e2e job. It cannot live in the
+      # filter above, because every filter name there becomes a matrix entry of
+      # "test" (and there is no service called "e2e"). The stack is affected by any
+      # service, the contracts, the compose file and the E2E tests themselves.
+      - name: Does the end-to-end stack need a run?
+        id: e2e
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            stack:
+              - '*-service/**'
+              - 'api-gateway/**'
+              - 'proto/**'
+              - 'docker-compose.yml'
+              - 'Integration-tests/**'
+              - '.github/workflows/ci.yml'
+
+      # "changes" = JSON list of the filter names that matched.
+      # Started by hand (workflow_dispatch) there is nothing to compare, so: all services.
+      - name: Build the list of services to test
+        id: result
+        env:
+          ALL: '["patient-service","billing-service","analytics-service","auth-service","api-gateway"]'
+          CHANGED: ${{ steps.filter.outputs.changes }}
+          STACK: ${{ steps.e2e.outputs.stack }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "services=$ALL" >> "$GITHUB_OUTPUT"
+            echo "e2e=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "services=${CHANGED:-[]}" >> "$GITHUB_OUTPUT"
+            echo "e2e=${STACK:-false}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # mvn verify for every changed service, in parallel (a MATRIX job: the same
+  # job definition, started once per value of matrix.service).
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test ${{ matrix.service }}
+    needs: changes
+    if: needs.changes.outputs.services != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false               # one red service must not cancel the others
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.service }}   # every "run:" starts in the service folder
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # JDK 21 (Temurin = same as our Dockerfiles). cache: maven saves ~/.m2/repository
+      # after the run and restores it next time; the key is a hash of the pom, so a
+      # dependency change creates a fresh cache.
+      - name: Set up Java 21
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: ${{ matrix.service }}/pom.xml
+
+      # verify = compile, unit + Testcontainers tests (surefire), JaCoCo report.
+      # The runner has a normal Docker daemon, so Testcontainers starts Postgres/Kafka
+      # directly - no socket mount or TESTCONTAINERS_HOST_OVERRIDE as in mvn-test.sh.
+      # -B = batch mode (no colours/progress bars in the log).
+      - name: Build and test (mvn verify)
+        run: ./mvnw -B verify
+
+      # Line coverage from JaCoCo's CSV (columns 8 = lines missed, 9 = lines covered),
+      # written to the job summary page that GitHub shows for each run.
+      - name: Coverage summary
+        if: always()
+        run: |
+          csv=target/site/jacoco/jacoco.csv
+          if [ -f "$csv" ]; then
+            awk -F, -v svc="${{ matrix.service }}" 'NR>1 {m+=$8; c+=$9}
+              END {printf "### %s\nLine coverage: **%.1f%%** (%d of %d lines)\n", svc, (m+c ? 100*c/(m+c) : 0), c, m+c}' \
+              "$csv" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Keep test results and the HTML coverage report for 14 days, also (always())
+      # when the tests failed - that is exactly when you want to read them.
+      # Download: Actions tab -> the run -> "Artifacts".
+      - name: Upload test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-${{ matrix.service }}
+          path: |
+            ${{ matrix.service }}/target/surefire-reports/
+            ${{ matrix.service }}/target/site/jacoco/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # PHASE 2 (step 2.2): NEW - end-to-end tests against the REAL stack.
+  # The per-service tests above replace other services with fakes; only this job
+  # proves that they fit together: gateway -> auth -> patient -> billing (gRPC)
+  # -> Kafka. Same docker-compose.yml as on your machine, same Integration-tests.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: End-to-end tests
+    needs: [changes, test]
+    # Run when the stack is affected AND no service test failed. "!cancelled()"
+    # is needed because "test" may be SKIPPED (e.g. only Integration-tests or
+    # docker-compose.yml changed) - by default a skipped "need" skips this job too.
+    if: >-
+      !cancelled()
+      && needs.changes.outputs.e2e == 'true'
+      && needs.test.result != 'failure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # Own compose project name -> own containers/volumes (pm-e2e_*), so
+      # "down -v" can never touch the volumes of a normal "docker compose up".
+      COMPOSE_PROJECT_NAME: pm-e2e
+    # The throwaway env file lives in $RUNNER_TEMP (the runner's temp folder, set
+    # by GitHub on every machine), not in the repo.
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # docker-compose.yml requires these variables (${VAR:?}). In CI they are
+      # generated fresh for every run: random passwords, random JWT secret (base64
+      # of 48 random bytes - JwtUtil base64-decodes it and needs >= 32 bytes).
+      # Nothing secret is stored in GitHub; the values die with the runner.
+      # ::add-mask:: hides the values if they ever appear in the log.
+      - name: Generate a throwaway .env for the stack
+        run: |
+          patient_pw=$(openssl rand -hex 16)
+          auth_pw=$(openssl rand -hex 16)
+          jwt=$(openssl rand -base64 48 | tr -d '\n')
+          echo "::add-mask::$patient_pw"; echo "::add-mask::$auth_pw"; echo "::add-mask::$jwt"
+          cat > "$RUNNER_TEMP/e2e.env" <<EOF
+          PATIENT_DB_NAME=patientdb
+          PATIENT_DB_USER=patient
+          PATIENT_DB_PASSWORD=$patient_pw
+          AUTH_DB_NAME=authdb
+          AUTH_DB_USER=auth
+          AUTH_DB_PASSWORD=$auth_pw
+          JWT_SECRET=$jwt
+          EOF
+
+      # --build : build all 5 images from source (multi-stage Dockerfiles)
+      # --wait  : return only when EVERY container is healthy (our readiness
+      #           healthchecks), or fail if one becomes unhealthy / the timeout passes.
+      #           So no "sleep 60" and no guessing when the stack is ready.
+      - name: Start the stack (build + wait until healthy)
+        run: docker compose --env-file "$RUNNER_TEMP/e2e.env" up -d --build --wait --wait-timeout 300
+
+      # Java + Maven for Integration-tests (it has no mvnw; the runner image comes
+      # with Maven preinstalled). cache: maven keeps its libraries between runs.
+      - name: Set up Java 21
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: Integration-tests/pom.xml
+
+      # REST Assured tests through the gateway, exactly like a client. Port 4004 is
+      # published by compose, so localhost works on the runner.
+      - name: Run Integration-tests
+        working-directory: Integration-tests
+        run: mvn -B test -Dgateway.url=http://localhost:4004
+
+      # Only when something failed: state + logs of every container, the first
+      # place to look ("which service died, and why?").
+      - name: Collect container logs
+        if: failure()
+        run: |
+          docker compose --env-file "$RUNNER_TEMP/e2e.env" ps -a
+          docker compose --env-file "$RUNNER_TEMP/e2e.env" logs --no-color --timestamps > "$RUNNER_TEMP/compose-logs.txt"
+
+      - name: Upload E2E reports and container logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: reports-e2e
+          path: |
+            Integration-tests/target/surefire-reports/
+            ${{ runner.temp }}/compose-logs.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Always clean up (containers + the pm-e2e volumes). On GitHub the machine is
+      # thrown away anyway; the step matters on self-hosted runners and locally.
+      - name: Stop the stack
+        if: always()
+        run: docker compose --env-file "$RUNNER_TEMP/e2e.env" down -v
+
+  # ---------------------------------------------------------------------------
+  # PHASE 2 (step 2.3): NEW - container images for every changed service.
+  #   pull request -> build + scan only (proves the image builds and is clean)
+  #   push to dev-branch / master (= a merged PR) -> build + scan + PUSH
+  # It runs only after test AND e2e passed, so only tested code is published.
+  # ---------------------------------------------------------------------------
+  images:
+    name: Image ${{ matrix.service }}
+    needs: [changes, test, e2e]
+    # No status function in the expression = GitHub adds success(): every
+    # needed job must have succeeded.
+    if: needs.changes.outputs.services != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    # true only for a push to dev-branch/master. Pull requests never push and
+    # never log in (PRs from forks do not even receive the secrets).
+    env:
+      PUBLISH: ${{ github.event_name == 'push' }}
+      # PHASE 2 (step 2.4): build-push-action uploads a "build record" (*.dockerbuild,
+      # for Docker Desktop's Builds view) as an artifact on every build. We do not use
+      # it, it only cluttered the artifact list; the build summary on the run page stays.
+      DOCKER_BUILD_RECORD_UPLOAD: false
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same build context as in docker-compose.yml: services that compile the
+      # shared proto/ contracts are built from the repo root, the others from
+      # their own folder.
+      - name: Choose the build context
+        id: ctx
+        run: |
+          case "${{ matrix.service }}" in
+            patient-service|billing-service|analytics-service) echo "context=." >> "$GITHUB_OUTPUT" ;;
+            *) echo "context=${{ matrix.service }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # Buildx = Docker's BuildKit builder. Needed for the "gha" layer cache below.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Image name and tags, computed from the git event:
+      #   sha-<7 chars>  always   -> immutable: exactly this commit, never moved
+      #   dev            on dev-branch -> "newest tested dev build" (moves)
+      #   latest         on master     -> "newest release" (moves)
+      # flavor latest=false: no automatic "latest" - only the rule above sets it.
+      # Labels (org.opencontainers.image.*) record repo, commit and build time.
+      - name: Compute image name and tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/pm-${{ matrix.service }}
+          flavor: |
+            latest=false
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev-branch' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
+
+      # 1st build: load the image into the runner's Docker (not pushed yet) so
+      # Trivy can scan it. cache-to/from type=gha keeps BuildKit's layers in
+      # GitHub's cache, one scope per service: unchanged layers (base image,
+      # Maven dependencies) are not rebuilt next time. mode=max also caches the
+      # layers of the build stage, not only those of the final image.
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.ctx.outputs.context }}
+          file: ${{ matrix.service }}/Dockerfile
+          load: true
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+
+      # Trivy = open-source vulnerability scanner (Aqua Security). It lists the
+      # OS packages (Alpine) and Java libraries in the image and checks them
+      # against vulnerability databases.
+      # a) report: every HIGH/CRITICAL finding in the log, never fails.
+      - name: Scan the image (report HIGH and CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: '0'
+
+      # b) gate: fail the job (and so block the push) on a CRITICAL finding that
+      #    already has a fixed version. Unfixable ones (ignore-unfixed) cannot be
+      #    solved by us today, so they only appear in the report above.
+      - name: Scan the image (fail on fixable CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'
+          skip-setup-trivy: true     # Trivy is already installed by the step above
+
+      # Only after a merge. The token (not the password) has Read & Write scope only.
+      - name: Log in to Docker Hub
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 2nd "build" = push. Every layer comes from the cache of the 1st build,
+      # so this only uploads - the scanned image and the pushed image are the same.
+      - name: Push the image to Docker Hub
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.ctx.outputs.context }}
+          file: ${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+
+      - name: Image summary
+        if: always()
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### Image ${{ matrix.service }}"
+            if [ "$PUBLISH" = "true" ]; then echo "Pushed:"; else echo "Built and scanned (not pushed - pull request):"; fi
+            for tag in $TAGS; do printf -- '- %s\n' "$tag"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # One summary check. With path filters, the "Test xyz" jobs exist only when xyz
+  # changed, so branch protection cannot require them by name. It requires this
+  # job instead: red if any job it needs failed or was cancelled; skipped
+  # jobs (nothing changed) are fine.
+  # ---------------------------------------------------------------------------
+  ci-result:
+    name: CI result
+    # PHASE 2 (step 2.2): e2e added to the jobs this check depends on.
+    # PHASE 2 (step 2.3): images added as well.
+    # PHASE 2 (old): needs: [changes, test]
+    # PHASE 2 (old): needs: [changes, test, e2e]
+    needs: [changes, test, e2e, images]
+    if: always()                     # run even when a needed job failed - that is the point
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any job failed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          case "$RESULTS" in
+            *failure*|*cancelled*) exit 1 ;;
+          esac
