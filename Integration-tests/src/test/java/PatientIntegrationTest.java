@@ -18,23 +18,27 @@ public class PatientIntegrationTest {
 
     @Test
     public void shouldReturnPatientDetailsWithValidToken() {
-        String loginPayload = """
-                {
-                    "email": "testuser@test.com",
-                    "password": "password123"
-                }
-                """;
-
-        String token = given()
-                .contentType("application/json")
-                .body(loginPayload)
-                .when()
-                .post("/auth/login")
-                .then()
-                .statusCode(200)
-                .extract()
-                .jsonPath()
-                .get("token");
+        // PHASE 3 (step 3.1): the token now comes from the token issuer (Auth0 / the mock
+        // in E2E), not from the retired auth-service.
+        // PHASE 3 (old):
+        // String loginPayload = """
+        //         {
+        //             "email": "testuser@test.com",
+        //             "password": "password123"
+        //         }
+        //         """;
+        //
+        // String token = given()
+        //         .contentType("application/json")
+        //         .body(loginPayload)
+        //         .when()
+        //         .post("/auth/login")
+        //         .then()
+        //         .statusCode(200)
+        //         .extract()
+        //         .jsonPath()
+        //         .get("token");
+        String token = E2E.token();
 
         given()
                 .header("Authorization", "Bearer " + token)

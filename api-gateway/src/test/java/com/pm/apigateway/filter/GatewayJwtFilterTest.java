@@ -2,6 +2,7 @@ package com.pm.apigateway.filter;
 
 import com.pm.apigateway.support.StubHttpServer;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -30,7 +31,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * These tests pin the contract clients rely on:
  *   valid token -> forwarded (prefix /api stripped) | invalid -> 401 | auth broken -> 503
  * and the B8 fix: auth-service hanging -> 503 after the timeout instead of 500 after 30 s.
+ *
+ * PHASE 3 (step 3.1): DISABLED, kept for reference. The JwtValidation filter is retired
+ * (tokens come from Auth0 and are verified inside the gateway). Its successor is
+ * GatewaySecurityTest. Not deleted, so the old contract stays readable.
  */
+@Disabled("PHASE 3 (step 3.1): JwtValidation filter retired - see GatewaySecurityTest")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient
 class GatewayJwtFilterTest {

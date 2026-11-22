@@ -1,10 +1,17 @@
 import io.restassured.RestAssured;
 import io.restassured.response.Response;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.Matchers.notNullValue;
 
+/**
+ * PHASE 3 (step 3.1): DISABLED, kept for reference. These tests logged in at
+ * auth-service /auth/login. auth-service is retired: Auth0 does the login, and in the
+ * E2E stack tokens come from mock-oauth2-server (see E2E.token()).
+ */
+@Disabled("PHASE 3 (step 3.1): auth-service retired - login happens at Auth0")
 public class AuthIntegrationTest {
 
     @BeforeAll

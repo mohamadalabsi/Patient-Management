@@ -1,0 +1,48 @@
+# -----------------------------------------------------------------------------
+# PHASE 3 (step 3.1): NEW - compose OVERRIDE file for end-to-end tests.
+#
+# Used together with the normal file:
+#   docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait
+# Compose merges both files: services below are ADDED, keys of existing services
+# (environment, depends_on) are MERGED and win over docker-compose.yml.
+#
+# Why: the E2E tests need access tokens, but CI must not depend on the real Auth0
+# (internet, secrets in GitHub, monthly token quota). So we start a FAKE issuer,
+# mock-oauth2-server, and point the services at it instead of Auth0.
+# The services' code does not change at all - only issuer-uri/audience do. That is
+# the whole idea of OIDC: any standard issuer works.
+#
+# How the pieces connect:
+#   1. Integration-tests ask mock-oauth2-server for a token (client credentials,
+#      http://localhost:8090/default/token). Which claims (audience, permissions) a
+#      client gets is set in Integration-tests/mock-issuer/mock-oauth2-server.json.
+#   2. They send it to the gateway (localhost:4004) like any client.
+#   3. The gateway verifies it with mock-oauth2-server's public keys, which it finds
+#      through http://mock-oauth2-server:8080/default/.well-known/openid-configuration.
+#   4. The token's "iss" must equal that issuer URL. The mock server writes the host
+#      it was called with into "iss", so the tests send "Host: mock-oauth2-server:8080"
+#      when asking for a token (see Integration-tests E2E.token()).
+# Locally (with your Auth0 values in .env) this file is optional: use it only to run
+# the E2E tests or to work offline.
+# -----------------------------------------------------------------------------
+services:
+  mock-oauth2-server:
+    container_name: mock-oauth2-server
+    image: ghcr.io/navikt/mock-oauth2-server:7.0.1
+    environment:
+      SERVER_PORT: 8080
+      JSON_CONFIG_PATH: /config/mock-oauth2-server.json
+    volumes:
+      - ./Integration-tests/mock-issuer/mock-oauth2-server.json:/config/mock-oauth2-server.json:ro
+    ports:
+      - "8090:8080"   # host 8090 -> the tests ask for tokens here
+    networks:
+      - application-network
+
+  api-gateway:
+    depends_on:
+      mock-oauth2-server:
+        condition: service_started
+    environment:
+      AUTH0_ISSUER_URI: http://mock-oauth2-server:8080/default
+      AUTH0_AUDIENCE: https://api.patient-management.local

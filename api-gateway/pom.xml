@@ -80,9 +80,35 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webclient</artifactId>
         </dependency>
+        <!--
+            PHASE 3 (step 3.1): NEW - the gateway becomes an OAuth2 "resource server".
+            "Resource server" = an application that ACCEPTS access tokens (it does not issue
+            them; Auth0 does). This starter brings Spring Security + the JWT (JOSE) library
+            and auto-configures, from two properties in application.yml (issuer-uri,
+            audiences), everything the old JwtValidation filter did by calling auth-service:
+              1. read the issuer's /.well-known/openid-configuration -> find its JWKS URL
+              2. download the issuer's PUBLIC keys once and cache them
+              3. on every request: check signature, issuer, audience and expiry LOCALLY
+            -> no network call per request any more. Our SecurityConfig decides WHICH paths
+               need a token. Works for the reactive (WebFlux) gateway out of the box.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!--
+            PHASE 3 (step 3.1): NEW - Spring Security test support (test scope only).
+            GatewaySecurityTest signs its own tokens with a test key, so it needs no real
+            issuer and no internet.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server-test</artifactId>
             <scope>test</scope>
         </dependency>
         <!--
