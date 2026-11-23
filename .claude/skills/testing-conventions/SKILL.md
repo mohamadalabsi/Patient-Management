@@ -1,14 +1,14 @@
 ---
 name: testing-conventions
-description: How tests are chosen, written, structured and run for backend microservices - test levels, real dependencies in containers, fakes for other services, async and timing tests, naming, pre-commit checks. Stack-agnostic principles (part A) plus the concrete Java/Spring Boot setup of this repo (JUnit, Mockito, Testcontainers, slices, scripts) in part B1 and equivalents for other stacks in part B2. Use when adding or changing any test, when production code changes need a test, when a test fails or is flaky, or when touching test dependencies, container setup, test runner config or the end-to-end test module.
+description: How tests are chosen, written, structured and run for backend microservices - test levels, real databases and brokers in containers, fakes for other services, security tests, async and timing tests, naming, proving a test can fail, pre-commit checks. Principles for any stack (part A), the concrete Java 21 / Spring Boot implementation with JUnit, Mockito, AssertJ, Spring test slices, Testcontainers, Awaitility and REST Assured (part B), equivalents for other stacks (part C). Project-agnostic. Use when adding or changing a test, when production code changes need a test, when a test fails or is flaky, or when touching test dependencies, container setup, test runner configuration or end-to-end tests.
 ---
 
-# Testing conventions (established in roadmap Phase 1)
+# Testing conventions
 
-**How to use this skill:** part A holds in any language. Then use the stack section that matches the
-project: B1 for Java/Spring Boot (this repo), B2 for other stacks. Background:
-`docs/implementation-plans/phase-01-testing.md`. Code style rules (`PHASE n` comments, old code
-commented out, one commit per step) come from `service-conventions` and apply to tests too.
+**How to use this skill:** part A holds in every language. Part B is the default implementation for
+Java / Spring Boot microservices. Part C maps it to other stacks. Project-specific commands (how to run
+the suite here, which services exist) belong in the project's docs. Code style (explaining comments,
+small commits) comes from `service-conventions`; tests that need tokens: `security-conventions`.
 
 ---
 
@@ -18,103 +18,130 @@ commented out, one commit per step) come from `service-conventions` and apply to
 
 | Change | Level | Starts | Proves |
 |---|---|---|---|
-| business rule, mapper, util | **unit** | one class/function, collaborators mocked | logic, in milliseconds |
-| endpoint, status code, validation, error body, pagination | **web slice** | the HTTP layer only, service mocked | the API contract |
-| query, DB constraint, migration | **data slice** | data layer + real database | SQL really behaves so |
+| business rule, mapper, util | **unit** | one class, collaborators mocked | logic, in milliseconds |
+| endpoint, status code, validation, error body, pagination, permissions | **web slice** | HTTP layer (+ security) only, service mocked | the API contract |
+| query, constraint, migration | **data slice** | data layer + real database | the SQL really behaves so |
 | transactions, events, calls to other services, timeouts | **integration** | whole service + real infra + fakes | the pieces work together |
-| a server API (gRPC/HTTP) others depend on | **API test** | the server, called by a real client | the contract |
+| an API other services depend on (gRPC/HTTP) | **API test** | the server, called by a real client | the contract |
 | a user journey across services | **end-to-end** (few!) | the whole deployed stack | it works for a client |
 
-Most tests are unit and slice tests; go higher only for what the lower level cannot see.
+Most tests are unit and slice tests; go higher only for what the lower level can't see.
 **Every bug fix gets a test that fails without the fix.**
 
 ### A2. Real dependencies, not imitations
 
-- Databases and brokers run as **real containers** (same image and version as production), started by the
-  test and thrown away afterwards. Never an in-memory substitute (H2, embedded broker): it behaves
-  differently and cannot run the real migrations.
-- Share one set of containers per test run; do not start new ones per test class without a reason.
-- Other services are replaced by **fakes that speak the real protocol** (a real gRPC/HTTP server on a
-  random port whose behaviour the test chooses: OK, error, slow). Mock objects only inside unit/slice tests.
-- Keep cheap pure logic real (e.g. the password hasher); mock what is slow or external.
-- Tests need **no secret file, no fixed port and no running stack**. Test-only secrets are constants in test code.
+- Databases and brokers run as **real containers** (same image and version as production), started by
+  the test and thrown away afterwards. No in-memory substitutes (H2, embedded brokers): they behave
+  differently and can't run the real migrations.
+- Share one set of containers per test run (reuse the test context), not one per test class.
+- Other services are replaced by **fakes that speak the real protocol**: a real HTTP/gRPC server on a
+  random port whose behaviour the test chooses (OK, error, slow) and which **records what it received**.
+  Mock objects only inside unit/slice tests.
+- The identity provider is replaced too: test tokens signed with a test key, or a fake issuer container
+  (see `security-conventions`). Tests never call the real provider.
+- Keep cheap pure logic real; mock what is slow or external.
+- Tests need **no secret file, no fixed port and no running stack**. Test-only values are constants in
+  test code or a test configuration file.
 
 ### A3. Writing tests
 
 - Given / When / Then; one behaviour per test; names read like a sentence
-  (`billingUnavailableRollsBackAndPublishesNothing`). Group by method.
-- Assert the full contract of errors: status, content type (`application/problem+json`), key fields.
-- **Unique data per test** (e.g. `it-<uuid>@example.com`); no dependency on order or earlier runs.
+  (`paymentDownRollsBackTheOrderAndPublishesNothing`). Group by method or feature.
+- Assert the full error contract: status, content type (`application/problem+json`), key fields.
+- **Security per endpoint:** no token -> 401, valid token without permission -> 403, right permission ->
+  success. Plus per-object rules (someone else's resource -> 403/404).
+- **Unique data per test** (e.g. `user-<uuid>@example.com`); no dependency on order or earlier runs.
 - **Async:** poll with a timeout until the condition holds; never fixed sleeps. To prove something did
-  *not* happen, watch for a fixed window and say why it is long enough.
-- **Timing:** make the fake far slower than the timeout (10 s vs 1-2 s) and use a generous upper bound;
-  the first call in a cold process pays warm-up costs.
-- Check **no PII in logs** where a component logs.
-- If a test documents surprising *current* behaviour, say so in a comment and record it as a finding in
-  the phase file. Do not silently change production code from a test step.
+  *not* happen, watch for a fixed window and say why it's long enough.
+- **Timing:** the fake is far slower than the timeout (10 s vs 1-2 s); generous upper bounds - a cold
+  process pays warm-up costs.
+- Check **no personal data in logs** where a component logs.
+- A test that documents surprising *current* behaviour says so in a comment and is recorded as a finding;
+  don't silently change production code from a test-only change.
 
 ### A4. Before committing a test change
 
 1. Run the whole suite of the touched service, not only the new test.
-2. Check the new test **really ran** (test count went up) - runners silently skip files with the wrong name.
+2. Check the new test **really ran** (count went up) - runners silently skip wrongly named files.
 3. Check it **fails when the code is broken**: break the protected line, run, revert.
-4. Run new timing/async tests alone too: cold runs expose flakiness.
-5. Container image builds do not run tests; tests are their own step (locally and in CI).
+4. Run new timing/async tests alone as well: cold runs expose flakiness.
+5. Image builds don't run tests; tests are their own step (locally and in CI).
 
 ---
 
-## B1. Java 21 / Spring Boot 4 (this repo)
+## B. Java 21 / Spring Boot
 
-| Level | Tooling | Example |
-|---|---|---|
-| unit | JUnit 5 + Mockito (`@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `InOrder`) + AssertJ | `PatientServiceTest`, `JwtUtilTest` |
-| web slice | `@WebMvcTest(XController.class)` + `MockMvc` + `@MockitoBean`; add `@Import(SecurityConfig.class)` when security matters | `PatientControllerTest`, `AuthControllerTest` |
-| data slice | `@DataJpaTest` + `@AutoConfigureTestDatabase(replace = NONE)` + `@Import(PostgresTestConfiguration.class)` | `PatientRepoTest` |
-| integration | `@SpringBootTest` + `@Import(TestcontainersConfiguration.class)` + fakes via `@DynamicPropertySource` | `PatientCreationFlowIntegrationTest` |
-| gRPC API | `grpc.server.in-process-name` + `grpc.server.port=-1` + `InProcessChannelBuilder` | `BillingGrpcServiceTest` |
-| gateway | `RANDOM_PORT` + `@AutoConfigureWebTestClient` + `StubHttpServer` (JDK HttpServer) | `GatewayJwtFilterTest` |
-| E2E | `Integration-tests/` REST Assured through the gateway (`-Dgateway.url=...`) | `PatientJourneyIntegrationTest` |
+### B1. Tooling per level
 
-- **Containers:** Testcontainers 2.x (`testcontainers-postgresql`, `-kafka`, `-junit-jupiter`), images
-  `postgres:16` and `apache/kafka:4.3.2` as in compose, wired by `@ServiceConnection` in a shared
-  `@TestConfiguration(proxyBeanMethods = false)` so Spring's context cache reuses them.
-- **Fakes:** `FakeBillingServer` (real gRPC server on port 0, modes OK/UNAVAILABLE/SLOW), `StubHttpServer`.
-- **Async / logs:** Awaitility `await().atMost(...).untilAsserted(...)`; `OutputCaptureExtension` for PII checks.
-- **Naming:** classes end in `Test`/`Tests` (`*IntegrationTest` for slow ones). **Surefire ignores `*IT`.**
-- **Dependencies:** `<scope>test</scope>`, versionless when the Boot BOM manages them. Boot 4 slices are
-  modular: `spring-boot-starter-webmvc-test`, `-data-jpa-test`, `-webflux-test`, `-kafka-test`,
-  `-security-test`, plus `spring-boot-testcontainers`.
-- **Mockito agent:** every POM has `maven-dependency-plugin` goal `properties`, an empty `<argLine></argLine>`
-  property and surefire `<argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>`
-  (self-attach fails on Java 21 in the container; `@{argLine}` leaves room for JaCoCo).
-- **Dockerfiles** keep `-DskipTests`.
-- **Run** (no JDK on the host):
+| Level | Tooling |
+|---|---|
+| unit | JUnit 5 + Mockito (`@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `ArgumentCaptor`, `InOrder`) + AssertJ |
+| web slice | `@WebMvcTest(XController.class)` + `MockMvc` + `@MockitoBean` for the service; `@Import(SecurityConfig.class)` (slices don't load your own `@Configuration`) |
+| data slice | `@DataJpaTest` + `@AutoConfigureTestDatabase(replace = NONE)` + a Postgres Testcontainers config |
+| integration | `@SpringBootTest` (+ `@AutoConfigureMockMvc`) + `@Import(TestcontainersConfiguration.class)`; fakes wired with `@DynamicPropertySource` |
+| gRPC API | in-process server (`grpc.server.in-process-name=...`, `grpc.server.port=-1`) + `InProcessChannelBuilder` |
+| reactive gateway | `@SpringBootTest(webEnvironment = RANDOM_PORT)` + `@AutoConfigureWebTestClient` + stub HTTP servers |
+| end-to-end | separate module with REST Assured against the running stack (`-Dgateway.url=...`), only through the gateway |
 
-  ```bash
-  scripts/mvn-test.sh <service>                                # mvn clean test in maven:3.9.9-eclipse-temurin-21
-  scripts/mvn-test.sh <service> -Dtest=ClassName               # one class
-  scripts/mvn-test.sh <service> -Dtest='ClassName*#method*'    # nested classes need the trailing *
+### B2. Containers
 
-  # E2E (stack must be up: docker compose up -d --build)
-  docker run --rm -v "$PWD/Integration-tests":/ws -v pm-m2-cache:/root/.m2 -w /ws \
-    --add-host=host.docker.internal:host-gateway maven:3.9.9-eclipse-temurin-21 \
-    mvn -B test -Dgateway.url=http://host.docker.internal:4004
-  ```
+```java
+@TestConfiguration(proxyBeanMethods = false)
+public class TestcontainersConfiguration {
+    @Bean @ServiceConnection
+    PostgreSQLContainer postgres() { return new PostgreSQLContainer("postgres:16"); }   // same tag as production
+    @Bean @ServiceConnection
+    KafkaContainer kafka() { return new KafkaContainer("apache/kafka:<same version>"); }
+}
+```
 
-  `mvn-test.sh` mounts the Docker socket and sets `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`
-  so Testcontainers can start and reach sibling containers; it always runs `clean` (stale `target/`
-  files once overrode `application.yml`).
+- Testcontainers 2.x modules (`testcontainers-postgresql`, `-kafka`, `-junit-jupiter`) +
+  `spring-boot-testcontainers`; `@ServiceConnection` sets the connection properties; Spring's test
+  context cache reuses the containers across classes with the same configuration.
+- Tests running inside a container (CI or a Docker-based script) need the Docker socket and, on Docker
+  Desktop, `TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal`.
 
-## B2. The same principles in other stacks
+### B3. Fakes and helpers
+
+- **gRPC fake:** `ServerBuilder.forPort(0).addService(...)` with modes OK / UNAVAILABLE / SLOW, records
+  requests and metadata (via a `ServerInterceptor`).
+- **HTTP fake:** JDK `com.sun.net.httpserver.HttpServer` on port 0 (no dependency), or WireMock.
+- **Security:** `@WithMockUser(authorities = {...})` for non-security tests; a `@TestConfiguration`
+  `JwtDecoder` (token string -> claims table) to run the real claim -> authority mapping; self-signed
+  JWTs (Nimbus `RSAKeyGenerator`, JWKS served by a stub) for gateway/filter tests; `spring-security-test`
+  `jwt()` / `mockJwt()` post-processors for quick cases.
+- **Async:** Awaitility `await().atMost(Duration.ofSeconds(10)).untilAsserted(...)`.
+- **Logs:** `@ExtendWith(OutputCaptureExtension.class)` + `CapturedOutput` to assert "no email in logs".
+- Test-only properties: `src/test/resources/application.properties` (a different file name than the
+  main `application.yml`, so both load) for placeholders like issuer URLs and client ids.
+
+### B4. Maven setup
+
+- Test dependencies `<scope>test</scope>`, versionless when the Boot BOM manages them; Boot 4 test
+  starters are modular (`spring-boot-starter-webmvc-test`, `-data-jpa-test`, `-webflux-test`,
+  `-kafka-test`, `-security-oauth2-resource-server-test`).
+- **Naming:** classes end in `Test`/`Tests` (`*IntegrationTest` for slow ones). Surefire ignores `*IT`
+  unless Failsafe is configured.
+- **Mockito as a Java agent** (self-attach is deprecated on Java 21 and fails in some containers):
+  `maven-dependency-plugin` goal `properties`, an empty `<argLine></argLine>` property, and surefire
+  `<argLine>@{argLine} -javaagent:${org.mockito:mockito-core:jar}</argLine>` (`@{argLine}` keeps room
+  for JaCoCo).
+- Always `mvn clean test` in scripts: stale files in `target/` can override current resources.
+- Run one class / method: `-Dtest=ClassName`, `-Dtest='ClassName*#method*'` (nested classes need `*`).
+
+---
+
+## C. The same principles in other stacks
 
 | Concern | Java / Spring Boot | Node.js / TypeScript | Python | Go |
 |---|---|---|---|---|
-| Test runner | JUnit 5 | Jest, Vitest | pytest | `go test` |
-| Assertions | AssertJ | `expect` | plain `assert` | testify `assert`/`require` |
-| Mocks | Mockito | `jest.fn` / `vi.fn` | `unittest.mock`, pytest-mock | gomock, mockery, hand-written fakes |
-| Web slice | `@WebMvcTest` + MockMvc | supertest on the app | FastAPI `TestClient` / httpx | `httptest.NewRecorder` |
+| Runner | JUnit 5 | Vitest, Jest | pytest | `go test` |
+| Assertions | AssertJ | `expect` | `assert` | testify |
+| Mocks | Mockito | `vi.fn` / `jest.fn` | `unittest.mock`, pytest-mock | gomock, hand-written fakes |
+| Web slice | `@WebMvcTest` + MockMvc | supertest | FastAPI `TestClient` / httpx | `httptest.NewRecorder` |
 | Real containers | Testcontainers | testcontainers-node | testcontainers-python | testcontainers-go |
-| Async polling | Awaitility | `vi.waitFor`, polling helper | polling helper (e.g. tenacity) | `require.Eventually` |
-| HTTP fake server | JDK HttpServer, WireMock | nock, msw | pytest-httpserver, respx | `httptest.NewServer` |
-| E2E HTTP | REST Assured | supertest, Playwright API | httpx + pytest | `net/http` client |
-| File naming | `*Test` (Surefire) | `*.test.ts` | `test_*.py` | `*_test.go` |
+| Async polling | Awaitility | `vi.waitFor` | tenacity / polling helper | `require.Eventually` |
+| HTTP fake | JDK HttpServer, WireMock | msw, nock | pytest-httpserver, respx | `httptest.NewServer` |
+| Test JWTs | Nimbus JOSE | `jose` | PyJWT / jwcrypto | lestrrat-go/jwx |
+| E2E HTTP | REST Assured | supertest, Playwright API | httpx + pytest | `net/http` |
+| File naming | `*Test` | `*.test.ts` | `test_*.py` | `*_test.go` |

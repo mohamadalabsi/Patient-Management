@@ -33,13 +33,15 @@ decision for one machine with local dev secrets, so it is not committed for ever
 Each roadmap phase ends with a commit that adds or extends a skill capturing what the
 phase established, so later work follows the same rules.
 
-Skills are **stack-agnostic**: part A = principles that hold in any language, part B1 = how
-this repo implements them (Java 21 / Spring Boot 4, exact tools and commands), part B2 = the
-equivalent tools in other stacks (Node.js, Python, Go).
+Skills are **project-agnostic** - they can be copied into any other project: part A = principles
+that hold in any language, part B = the concrete Java 21 / Spring Boot microservices implementation
+(starters, configuration, code patterns) with generic examples, part C = the equivalent tools in other
+stacks. Nothing in a skill names this repo's services, files or commands; those live in `CLAUDE.md`,
+the README and `docs/implementation-plans/`.
 
 | Phase | Skill |
 |---|---|
 | 0 - fixes & foundation | `skills/service-conventions` - code style, service structure, API, DB, messaging, Docker |
 | 1 - testing safety net | `skills/testing-conventions` - which test for which change, Testcontainers, fakes, naming, Maven setup, how to run |
 | 2 - CI + Docker Hub | `skills/ci-conventions` - pipeline order, path filters, e2e in CI, immutable image tags, scanning, secrets, pinned actions, Dependabot |
-| 3 - Spring Security + Auth0 | `skills/security-conventions` - authN vs authZ, local token verification (issuer/audience/expiry/JWKS), defence in depth, permissions per endpoint, roles vs app permissions, service-to-service tokens (HTTP + gRPC), 401/403, CORS, client-side token storage, per-object rules, testing with fake issuers |
+| 3 - Spring Security + Auth0 | `skills/security-conventions` - registration/login for mobile and web (PKCE, social login), token storage, user profiles keyed by `sub`, account deletion, local token verification, defence in depth, permissions and roles, per-object rules (owner, followers, group admins), service-to-service tokens (HTTP + gRPC), 401/403, CORS, rate limits, testing with fake issuers |
