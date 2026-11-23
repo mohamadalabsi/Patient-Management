@@ -42,3 +42,4 @@ equivalent tools in other stacks (Node.js, Python, Go).
 | 0 - fixes & foundation | `skills/service-conventions` - code style, service structure, API, DB, messaging, Docker |
 | 1 - testing safety net | `skills/testing-conventions` - which test for which change, Testcontainers, fakes, naming, Maven setup, how to run |
 | 2 - CI + Docker Hub | `skills/ci-conventions` - pipeline order, path filters, e2e in CI, immutable image tags, scanning, secrets, pinned actions, Dependabot |
+| 3 - Spring Security + Auth0 | `skills/security-conventions` - authN vs authZ, local token verification (issuer/audience/expiry/JWKS), defence in depth, permissions per endpoint, roles vs app permissions, service-to-service tokens (HTTP + gRPC), 401/403, CORS, client-side token storage, per-object rules, testing with fake issuers |
