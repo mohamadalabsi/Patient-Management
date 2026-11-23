@@ -54,6 +54,16 @@ services:
       # (Spring Duration format: 3s, 500ms ...). Bound to billing.service.deadline.
       BILLING_SERVICE_DEADLINE: 3s
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # PHASE 3 (step 3.2): NEW - patient-service checks the token AGAIN (it may be
+      # reached without the gateway) plus the permissions. Same issuer/audience as
+      # the gateway - both must trust exactly the same tokens.
+      AUTH0_ISSUER_URI: ${AUTH0_ISSUER_URI:?AUTH0_ISSUER_URI is required (Auth0 tenant URL with trailing /)}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required (Auth0 API identifier)}
+      # PHASE 3 (step 3.3): NEW - patient-service's OWN identity (Auth0 application
+      # "patient-service", Machine to Machine, only create:billing-accounts). With these
+      # it gets a token from Auth0 and sends it on every gRPC call to billing.
+      PATIENT_SERVICE_CLIENT_ID: ${PATIENT_SERVICE_CLIENT_ID:?PATIENT_SERVICE_CLIENT_ID is required (Auth0 app patient-service)}
+      PATIENT_SERVICE_CLIENT_SECRET: ${PATIENT_SERVICE_CLIENT_SECRET:?PATIENT_SERVICE_CLIENT_SECRET is required (Auth0 app patient-service)}
 
   billing-service:
     container_name: billing-service
@@ -81,6 +91,11 @@ services:
     ports:
       - "4002:4002"
       - "9001:9001"
+    # PHASE 3 (step 3.3): NEW - billing verifies the token on every gRPC call
+    # (BearerTokenInterceptor). Same issuer/audience as the other services.
+    environment:
+      AUTH0_ISSUER_URI: ${AUTH0_ISSUER_URI:?AUTH0_ISSUER_URI is required (Auth0 tenant URL with trailing /)}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required (Auth0 API identifier)}
 
   analytics-service:
     container_name: analytics-service
@@ -129,10 +144,15 @@ services:
     #depends_on:
     #  - patient-service
     #  - auth-service
+    # PHASE 3 (step 3.1): auth-service is retired, the gateway no longer needs it.
+    # PHASE 3 (old):
+    #depends_on:
+    #  patient-service:
+    #    condition: service_healthy
+    #  auth-service:
+    #    condition: service_healthy
     depends_on:
       patient-service:
-        condition: service_healthy
-      auth-service:
         condition: service_healthy
     # PHASE 0 (step 0.4): healthcheck on Spring's readiness endpoint (explained at patient-service).
     healthcheck:
@@ -149,38 +169,51 @@ services:
     ports:
       - "4004:4004"
     environment:
-      AUTH_SERVICE_URL: http://auth-service:4005
+      # PHASE 3 (old): AUTH_SERVICE_URL: http://auth-service:4005
       PATIENT_SERVICE_URL: http://patient-service:4000
+      # PHASE 3 (step 3.1): NEW - which token issuer and audience the gateway trusts
+      # (read by application.yml -> spring.security.oauth2.resourceserver.jwt).
+      # Values come from .env: your Auth0 tenant URL (WITH trailing "/") and the API
+      # identifier. ":?" -> compose refuses to start if one is missing, instead of a
+      # gateway that rejects every token.
+      AUTH0_ISSUER_URI: ${AUTH0_ISSUER_URI:?AUTH0_ISSUER_URI is required (Auth0 tenant URL with trailing /)}
+      AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:?AUTH0_AUDIENCE is required (Auth0 API identifier)}
 
-  auth-service:
-    container_name: auth-service
-    image: auth-service
-    build:
-      context: ./auth-service
-    depends_on:
-      postgres-auth:
-        condition: service_healthy
-    # PHASE 0 (step 0.4): healthcheck on Spring's readiness endpoint (explained at patient-service).
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4005/actuator/health/readiness || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    # PHASE 0 (step 0.4): if the process crashes, Docker starts it again (unless you
-    # stopped it yourself). Kubernetes does the same automatically in Phase 7.
-    restart: unless-stopped
-    networks:
-      - application-network
-    environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auth:5432/${AUTH_DB_NAME:?AUTH_DB_NAME is required}
-      SPRING_DATASOURCE_USERNAME: ${AUTH_DB_USER:?AUTH_DB_USER is required}
-      SPRING_DATASOURCE_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-      # PHASE 0 (step 0.5): LOCAL DEVELOPMENT ONLY - also load db/dev-data, which seeds
-      # the test user (testuser@test.com) used by Integration-tests and api-requests.
-      # A production deployment must not set this, so no known-password admin exists.
-      SPRING_FLYWAY_LOCATIONS: classpath:db/migration,classpath:db/dev-data
+  # ---------------------------------------------------------------------------
+  # PHASE 3 (step 3.1): auth-service RETIRED. Auth0 handles login and issues the
+  # tokens; the gateway and the services verify them with Auth0's public keys.
+  # The code stays in auth-service/ (CI still builds and tests it) - it just does
+  # not run in the stack any more.
+  # PHASE 3 (old):
+#  auth-service:
+#    container_name: auth-service
+#    image: auth-service
+#    build:
+#      context: ./auth-service
+#    depends_on:
+#      postgres-auth:
+#        condition: service_healthy
+#    # PHASE 0 (step 0.4): healthcheck on Spring's readiness endpoint (explained at patient-service).
+#    healthcheck:
+#      test: ["CMD-SHELL", "wget -qO- http://localhost:4005/actuator/health/readiness || exit 1"]
+#      interval: 10s
+#      timeout: 5s
+#      retries: 10
+#      start_period: 30s
+#    # PHASE 0 (step 0.4): if the process crashes, Docker starts it again (unless you
+#    # stopped it yourself). Kubernetes does the same automatically in Phase 7.
+#    restart: unless-stopped
+#    networks:
+#      - application-network
+#    environment:
+#      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auth:5432/${AUTH_DB_NAME:?AUTH_DB_NAME is required}
+#      SPRING_DATASOURCE_USERNAME: ${AUTH_DB_USER:?AUTH_DB_USER is required}
+#      SPRING_DATASOURCE_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
+#      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+#      # PHASE 0 (step 0.5): LOCAL DEVELOPMENT ONLY - also load db/dev-data, which seeds
+#      # the test user (testuser@test.com) used by Integration-tests and api-requests.
+#      # A production deployment must not set this, so no known-password admin exists.
+#      SPRING_FLYWAY_LOCATIONS: classpath:db/migration,classpath:db/dev-data
 
   postgres:
     container_name: patient-postgres
@@ -201,24 +234,26 @@ services:
     volumes:
       - postgres_patient_data:/var/lib/postgresql/data
 
-  postgres-auth:
-    container_name: auth-postgres
-    image: postgres:16
-    environment:
-      POSTGRES_USER: ${AUTH_DB_USER:?AUTH_DB_USER is required}
-      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
-      POSTGRES_DB: ${AUTH_DB_NAME:?AUTH_DB_NAME is required}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks:
-      - application-network
-    ports:
-      - "5001:5432"
-    volumes:
-      - postgres_auth_data:/var/lib/postgresql/data
+  # PHASE 3 (step 3.1): auth-service's own database is retired with it.
+  # PHASE 3 (old):
+#  postgres-auth:
+#    container_name: auth-postgres
+#    image: postgres:16
+#    environment:
+#      POSTGRES_USER: ${AUTH_DB_USER:?AUTH_DB_USER is required}
+#      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:?AUTH_DB_PASSWORD is required}
+#      POSTGRES_DB: ${AUTH_DB_NAME:?AUTH_DB_NAME is required}
+#    healthcheck:
+#      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+#      interval: 5s
+#      timeout: 5s
+#      retries: 10
+#    networks:
+#      - application-network
+#    ports:
+#      - "5001:5432"
+#    volumes:
+#      - postgres_auth_data:/var/lib/postgresql/data
 
   kafka:
     container_name: kafka-service
@@ -261,4 +296,6 @@ networks:
 
 volumes:
   postgres_patient_data:
-  postgres_auth_data:
+  # PHASE 3 (step 3.1): auth DB retired. This change does NOT delete the volume; remove it
+  # yourself when you no longer need the old users (docker volume ls / docker volume rm).
+  # PHASE 3 (old): postgres_auth_data:

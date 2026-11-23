@@ -54,6 +54,20 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
+        <!--
+            PHASE 3 (step 3.3): NEW - billing accepts tokens (resource server).
+            We use it for two things:
+              1. a JwtDecoder bean built from issuer-uri/audiences (application.yml): it
+                 verifies signature, issuer, audience and expiry - the same checks as the
+                 gateway and patient-service. Our gRPC interceptor (BearerTokenInterceptor)
+                 calls it for every gRPC request.
+              2. Spring Security for billing's small HTTP side (only actuator):
+                 config/SecurityConfig.java keeps health public and closes the rest.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc-test</artifactId>

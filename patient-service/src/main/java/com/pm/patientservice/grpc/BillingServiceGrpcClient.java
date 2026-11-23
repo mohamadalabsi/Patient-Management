@@ -37,14 +37,23 @@ public class BillingServiceGrpcClient {
                                     @Value("${billing.service.port:9001}") int serverPort,
                                     // PHASE 0 (step 0.7): NEW - max time we wait for billing.
                                     // Spring converts "3s", "500ms" ... into a Duration.
-                                    @Value("${billing.service.deadline:3s}") Duration deadline) {
+                                    @Value("${billing.service.deadline:3s}") Duration deadline,
+                                    // PHASE 3 (step 3.3): NEW - our own service token (Auth0)
+                                    ServiceTokenProvider serviceTokens) {
         log.info("Connecting to Billing Service at {}:{} (deadline {})", serverAddress, serverPort, deadline);
         // A ManagedChannel is expensive (TCP/HTTP2 connection, thread pools) and is
         // meant to be created ONCE and reused for all calls - like a DB connection pool.
         // usePlaintext() = no TLS; acceptable only inside our private Docker network
         // (TLS / service-to-service auth comes in Phase 3).
         this.channel = ManagedChannelBuilder.forAddress(serverAddress, serverPort).usePlaintext().build();
-        this.blockingStub = BillingServiceGrpc.newBlockingStub(channel);
+        // PHASE 3 (step 3.3): every call made through this stub now carries
+        // "authorization: Bearer <patient-service token>". billing-service checks it and
+        // requires the permission create:billing-accounts.
+        // serviceTokens::token is called per call, but returns the CACHED token until it
+        // is about to expire - Auth0 is asked about once per token lifetime.
+        // PHASE 3 (old): this.blockingStub = BillingServiceGrpc.newBlockingStub(channel);
+        this.blockingStub = BillingServiceGrpc.newBlockingStub(channel)
+                .withCallCredentials(new BearerTokenCallCredentials(serviceTokens::token));
         this.deadline = deadline;
     }
 
@@ -80,6 +89,10 @@ public class BillingServiceGrpcClient {
         } catch (StatusRuntimeException e) {
             // e.getStatus().getCode(): UNAVAILABLE (billing down / unreachable),
             // DEADLINE_EXCEEDED (too slow), INTERNAL (bug in billing) ...
+            // PHASE 3 (step 3.3): also UNAUTHENTICATED (no/invalid service token) and
+            // PERMISSION_DENIED (token lacks create:billing-accounts). For the HTTP client
+            // it is the same situation: billing can't be used right now -> 503 + rollback.
+            // The log line shows the exact code, so operators can tell "auth" from "down".
             log.error("Billing call failed for patient {}: {}", patientId, e.getStatus().getCode());
             throw new BillingServiceUnavailableException(
                     "Billing service call failed: " + e.getStatus().getCode(), e);

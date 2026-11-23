@@ -3,8 +3,13 @@ package com.pm.patientservice.grpc;
 import billing.BillingRequest;
 import billing.BillingResponse;
 import billing.BillingServiceGrpc;
+import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 
@@ -32,12 +37,29 @@ public class FakeBillingServer {
 
     private final Server server;
     private final List<BillingRequest> requests = new CopyOnWriteArrayList<>();
+    // PHASE 3 (step 3.3): NEW - the "authorization" metadata of every call (null = none sent)
+    private final List<String> authorizations = new CopyOnWriteArrayList<>();
+    private static final Metadata.Key<String> AUTHORIZATION =
+            Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER);
     private final long slowDelayMillis;
     private volatile Mode mode = Mode.OK;
 
     public FakeBillingServer(long slowDelayMillis) {
         this.slowDelayMillis = slowDelayMillis;
-        this.server = ServerBuilder.forPort(0).addService(new BillingServiceGrpc.BillingServiceImplBase() {
+        // PHASE 3 (step 3.3): the service is wrapped with a tiny interceptor that only
+        // RECORDS the authorization header (it checks nothing - the real check is billing's
+        // job and is tested in billing-service). Tests assert that the token was sent.
+        // PHASE 3 (old): this.server = ServerBuilder.forPort(0).addService(new BillingServiceGrpc.BillingServiceImplBase() {
+        ServerInterceptor recordAuthorization = new ServerInterceptor() {
+            @Override
+            public <Q, A> ServerCall.Listener<Q> interceptCall(ServerCall<Q, A> call, Metadata headers,
+                                                               ServerCallHandler<Q, A> next) {
+                String authorization = headers.get(AUTHORIZATION);
+                authorizations.add(authorization == null ? "<none>" : authorization);
+                return next.startCall(call, headers);
+            }
+        };
+        this.server = ServerBuilder.forPort(0).addService(ServerInterceptors.intercept(new BillingServiceGrpc.BillingServiceImplBase() {
             @Override
             public void createBillingAccount(BillingRequest request, StreamObserver<BillingResponse> response) {
                 requests.add(request);
@@ -51,7 +73,7 @@ public class FakeBillingServer {
                     case OK -> reply(response);
                 }
             }
-        }).build();
+        }, recordAuthorization)).build();
     }
 
     public FakeBillingServer start() {
@@ -73,6 +95,11 @@ public class FakeBillingServer {
 
     public List<BillingRequest> requests() {
         return requests;
+    }
+
+    /** PHASE 3 (step 3.3): NEW - authorization header per received call ("<none>" if missing). */
+    public List<String> authorizations() {
+        return authorizations;
     }
 
     private static void reply(StreamObserver<BillingResponse> response) {

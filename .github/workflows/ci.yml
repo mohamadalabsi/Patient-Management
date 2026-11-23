@@ -106,6 +106,7 @@ jobs:
               - 'api-gateway/**'
               - 'proto/**'
               - 'docker-compose.yml'
+              - 'docker-compose.e2e.yml'   # PHASE 3 (step 3.1): mock token issuer for E2E
               - 'Integration-tests/**'
               - '.github/workflows/ci.yml'
 
@@ -215,6 +216,11 @@ jobs:
       # Own compose project name -> own containers/volumes (pm-e2e_*), so
       # "down -v" can never touch the volumes of a normal "docker compose up".
       COMPOSE_PROJECT_NAME: pm-e2e
+      # PHASE 3 (step 3.1): NEW - every "docker compose" command in this job uses BOTH
+      # files: docker-compose.e2e.yml adds the fake token issuer (mock-oauth2-server) and
+      # points the services at it, so E2E needs no internet and no Auth0 secrets.
+      # (COMPOSE_FILE is read by compose itself; ":" separates the files on Linux.)
+      COMPOSE_FILE: docker-compose.yml:docker-compose.e2e.yml
     # The throwaway env file lives in $RUNNER_TEMP (the runner's temp folder, set
     # by GitHub on every machine), not in the repo.
     steps:
@@ -224,24 +230,30 @@ jobs:
           persist-credentials: false
 
       # docker-compose.yml requires these variables (${VAR:?}). In CI they are
-      # generated fresh for every run: random passwords, random JWT secret (base64
-      # of 48 random bytes - JwtUtil base64-decodes it and needs >= 32 bytes).
+      # generated fresh for every run (random DB password).
       # Nothing secret is stored in GitHub; the values die with the runner.
       # ::add-mask:: hides the values if they ever appear in the log.
+      # PHASE 3 (step 3.1): auth-service (its DB + JWT secret) is retired; instead the
+      # issuer/audience of the MOCK token server (docker-compose.e2e.yml). They are not
+      # secret: the mock signs tokens for anyone - it only exists in this test stack.
+      # (step 3.3: also patient-service's client id/secret - the mock accepts any secret.)
+      # PHASE 3 (old):
+      #   auth_pw=$(openssl rand -hex 16)
+      #   jwt=$(openssl rand -base64 48 | tr -d '\n')
+      #   echo "::add-mask::$patient_pw"; echo "::add-mask::$auth_pw"; echo "::add-mask::$jwt"
+      #   AUTH_DB_NAME=authdb / AUTH_DB_USER=auth / AUTH_DB_PASSWORD=$auth_pw / JWT_SECRET=$jwt
       - name: Generate a throwaway .env for the stack
         run: |
           patient_pw=$(openssl rand -hex 16)
-          auth_pw=$(openssl rand -hex 16)
-          jwt=$(openssl rand -base64 48 | tr -d '\n')
-          echo "::add-mask::$patient_pw"; echo "::add-mask::$auth_pw"; echo "::add-mask::$jwt"
+          echo "::add-mask::$patient_pw"
           cat > "$RUNNER_TEMP/e2e.env" <<EOF
           PATIENT_DB_NAME=patientdb
           PATIENT_DB_USER=patient
           PATIENT_DB_PASSWORD=$patient_pw
-          AUTH_DB_NAME=authdb
-          AUTH_DB_USER=auth
-          AUTH_DB_PASSWORD=$auth_pw
-          JWT_SECRET=$jwt
+          AUTH0_ISSUER_URI=http://mock-oauth2-server:8080/default
+          AUTH0_AUDIENCE=https://api.patient-management.local
+          PATIENT_SERVICE_CLIENT_ID=patient-service
+          PATIENT_SERVICE_CLIENT_SECRET=not-checked-by-the-mock
           EOF
 
       # --build : build all 5 images from source (multi-stage Dockerfiles)
@@ -263,6 +275,8 @@ jobs:
 
       # REST Assured tests through the gateway, exactly like a client. Port 4004 is
       # published by compose, so localhost works on the runner.
+      # PHASE 3 (step 3.1): the tests get their tokens from mock-oauth2-server on
+      # localhost:8090 (their default -Dtoken.url), published by docker-compose.e2e.yml.
       - name: Run Integration-tests
         working-directory: Integration-tests
         run: mvn -B test -Dgateway.url=http://localhost:4004

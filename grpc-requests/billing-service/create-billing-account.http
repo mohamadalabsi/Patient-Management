@@ -1,4 +1,10 @@
+### PHASE 3 (step 3.4): billing now requires "authorization: Bearer <token>" with the permission
+# create:billing-accounts (BearerTokenInterceptor). Only the patient-service app in Auth0 has it,
+# so with your test token this request answers PERMISSION_DENIED, and without the header
+# UNAUTHENTICATED - both are the expected, secure answers. patient-service calls billing itself.
+# PHASE 3 (old): (same request without the authorization line)
 GRPC localhost:9001/BillingService/CreateBillingAccount
+authorization: Bearer {{token}}
 
 {
   "patientId": "12345",

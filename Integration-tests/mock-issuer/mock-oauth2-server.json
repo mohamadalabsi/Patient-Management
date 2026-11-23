@@ -1,0 +1,67 @@
+{
+  "interactiveLogin": false,
+  "tokenCallbacks": [
+    {
+      "issuerId": "default",
+      "tokenExpiry": 3600,
+      "requestMappings": [
+        {
+          "requestParam": "client_id",
+          "match": "e2e-client",
+          "claims": {
+            "sub": "e2e-client",
+            "aud": [
+              "https://api.patient-management.local"
+            ],
+            "permissions": [
+              "read:patients",
+              "write:patients",
+              "delete:patients"
+            ]
+          }
+        },
+        {
+          "requestParam": "client_id",
+          "match": "e2e-reader",
+          "claims": {
+            "sub": "e2e-reader",
+            "aud": [
+              "https://api.patient-management.local"
+            ],
+            "permissions": [
+              "read:patients"
+            ]
+          }
+        },
+        {
+          "requestParam": "client_id",
+          "match": "e2e-other-api",
+          "claims": {
+            "sub": "e2e-other-api",
+            "aud": [
+              "https://some-other-api"
+            ],
+            "permissions": [
+              "read:patients",
+              "write:patients",
+              "delete:patients"
+            ]
+          }
+        },
+        {
+          "requestParam": "client_id",
+          "match": "patient-service",
+          "claims": {
+            "sub": "patient-service@clients",
+            "aud": [
+              "https://api.patient-management.local"
+            ],
+            "permissions": [
+              "create:billing-accounts"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

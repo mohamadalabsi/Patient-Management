@@ -58,24 +58,32 @@ spring:
       server:          # PHASE 0 (new): extra level "server.webflux"
         webflux:
           routes:
-            # /auth/login -> auth-service /login (StripPrefix=1 removes "/auth")
-            - id: auth-service-route
-              uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
-              predicates:
-                - Path=/auth/**
-              filters:
-                - StripPrefix=1
+            # PHASE 3 (step 3.1): auth-service is retired - Auth0 does the login and issues
+            # the tokens now, so there is no /auth/** route any more.
+            # PHASE 3 (old):
+            # # /auth/login -> auth-service /login (StripPrefix=1 removes "/auth")
+            # - id: auth-service-route
+            #   uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
+            #   predicates:
+            #     - Path=/auth/**
+            #   filters:
+            #     - StripPrefix=1
 
-            # /api/patients/** -> patient-service /patients/** after the token check.
-            # "JwtValidation" = our class JwtValidationGatewayFilterFactory
-            # (Spring strips the "GatewayFilterFactory" suffix to get the name).
+            # /api/patients/** -> patient-service /patients/**.
+            # PHASE 3 (step 3.1): the token is no longer checked by a route filter. Spring
+            # Security (config/SecurityConfig.java) checks it BEFORE any route runs, so a
+            # request without a valid token never reaches this route at all.
+            # The Authorization header is forwarded unchanged -> patient-service receives
+            # the same token and checks the permissions itself (step 3.2).
             - id: patient-service-route
               uri: ${PATIENT_SERVICE_URL:http://patient-service:4000}
               predicates:
                 - Path=/api/patients/**
               filters:
                 - StripPrefix=1
-                - JwtValidation
+                # PHASE 3 (old): "JwtValidation" = JwtValidationGatewayFilterFactory, which
+                # called auth-service /validate on EVERY request.
+                # - JwtValidation
 
             - id: api-docs-patient-route
               uri: ${PATIENT_SERVICE_URL:http://patient-service:4000}
@@ -84,19 +92,56 @@ spring:
               filters:
                 - RewritePath=/api-docs/patients,/v3/api-docs
 
-            - id: api-docs-auth-route
-              uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
-              predicates:
-                - Path=/api-docs/auth
-              filters:
-                - RewritePath=/api-docs/auth,/v3/api-docs
+            # PHASE 3 (step 3.1): auth-service is retired, so its API docs are gone too.
+            # PHASE 3 (old):
+            # - id: api-docs-auth-route
+            #   uri: ${AUTH_SERVICE_URL:http://auth-service:4005}
+            #   predicates:
+            #     - Path=/api-docs/auth
+            #   filters:
+            #     - RewritePath=/api-docs/auth,/v3/api-docs
 
-auth:
-  service:
-    url: ${AUTH_SERVICE_URL:http://auth-service:4005}
-    # PHASE 0 (step 0.8): NEW - max wait for auth-service /validate. Without it a
-    # down auth-service made clients wait ~30s (TCP connect timeout) and get 500.
-    timeout: ${AUTH_SERVICE_TIMEOUT:3s}
+  # ---------------------------------------------------------------------------
+  # PHASE 3 (step 3.1): NEW - how the gateway checks access tokens.
+  #
+  # issuer-uri: WHO may issue tokens we accept. At the first request Spring reads
+  #   <issuer-uri>/.well-known/openid-configuration, finds the issuer's public keys
+  #   (JWKS) there and caches them. Every token must then
+  #     - be signed by one of those keys      (nobody else can create a valid one)
+  #     - have "iss" == this exact value      (Auth0: WITH the trailing "/")
+  #     - not be expired ("exp")
+  # audiences: WHO the token is meant for. Auth0 puts the API identifier we asked a
+  #   token for into "aud". A token for a different API of the same tenant is
+  #   rejected, even though its signature is valid.
+  #
+  # The values come from the environment (.env -> docker-compose.yml):
+  #   locally: your Auth0 tenant + API identifier
+  #   in CI:   the mock token server (docker-compose.e2e.yml)
+  # The gateway does not know or care which one it is - that is the point of OIDC.
+  # ---------------------------------------------------------------------------
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${AUTH0_ISSUER_URI}
+          audiences: ${AUTH0_AUDIENCE}
+
+# PHASE 3 (step 3.1): only the old JwtValidation filter read these. The filter is no
+# longer a Spring bean (auth-service retired), so the settings are not needed.
+# PHASE 3 (old):
+#auth:
+#  service:
+#    url: ${AUTH_SERVICE_URL:http://auth-service:4005}
+#    # PHASE 0 (step 0.8): NEW - max wait for auth-service /validate. Without it a
+#    # down auth-service made clients wait ~30s (TCP connect timeout) and get 500.
+#    timeout: ${AUTH_SERVICE_TIMEOUT:3s}
+
+# PHASE 3 (step 3.1): NEW - which browser origins may call the gateway (CORS).
+# A browser app on another origin (e.g. a frontend on http://localhost:3000) may
+# only read our responses if the gateway says so. Comma-separated list.
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
 
 logging:
   level:

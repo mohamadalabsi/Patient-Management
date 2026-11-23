@@ -89,6 +89,30 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
+        <!--
+            PHASE 3 (step 3.2): NEW - patient-service becomes an OAuth2 "resource server"
+            too (like the gateway in step 3.1, but servlet/WebMVC instead of reactive).
+            The gateway already checked "is this token real?". patient-service checks it
+            AGAIN and additionally "may this caller do THIS?" (permissions per endpoint).
+            Why twice: defence in depth - port 4000 is reachable inside the network
+            without the gateway, and a gateway bug must not open the data.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
+        <!--
+            PHASE 3 (step 3.3): NEW - OAuth2 CLIENT: the opposite direction.
+              resource server (above) = ACCEPTS tokens from callers
+              client (this)           = GETS its own token from Auth0
+            patient-service uses it to get a "service token" (client credentials grant)
+            for its gRPC call to billing-service. It also caches the token until shortly
+            before it expires, so Auth0 is not asked on every new patient.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-client</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>
@@ -118,6 +142,13 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- PHASE 3 (step 3.2): NEW - Spring Security test support (@WithMockUser,
+             security in MockMvc). Test scope: never in the jar. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

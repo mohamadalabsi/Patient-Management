@@ -15,6 +15,7 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.data.web.PagedModel;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,6 +24,16 @@ import java.util.UUID;
 
 // PHASE 0 (old): import java.util.List;
 
+// PHASE 3 (step 3.2): every endpoint now declares the permission it needs.
+//   GET    /patients        -> read:patients
+//   POST   /patients        -> write:patients
+//   PUT    /patients/{id}   -> write:patients
+//   DELETE /patients/{id}   -> delete:patients
+// How it connects: the token's "permissions" claim (from Auth0) becomes the caller's
+// authorities (application.yml), and @PreAuthorize compares them with the rule BEFORE
+// the method runs. Missing -> 403 (config/SecurityConfig.java), the method never runs.
+// Delete is its own permission on purpose: removing health data is the most dangerous
+// operation, so it can be granted to fewer callers than "write".
 @RestController
 @Tag(name="Patient", description = "Patient management APIs")
 public class PatientController {
@@ -62,6 +73,7 @@ public class PatientController {
     // public ResponseEntity<List<PatientResponseDTO>> getAllPatients() {
     //     return ResponseEntity.ok().body(patientService.getAllPatients());
     // }
+    @PreAuthorize("hasAuthority('read:patients')") // PHASE 3 (step 3.2)
     @GetMapping("/patients")
     @Operation(summary = "Get a page of patients (?page=0&size=20&sort=name,asc)")
     public ResponseEntity<PagedModel<PatientResponseDTO>> getPatients(
@@ -69,6 +81,7 @@ public class PatientController {
         return ResponseEntity.ok(new PagedModel<>(patientService.getPatients(pageable)));
     }
 
+    @PreAuthorize("hasAuthority('write:patients')") // PHASE 3 (step 3.2)
     @PostMapping("/patients")
     @Operation(summary = "Create new Patient Version 1.0")
     public ResponseEntity<PatientResponseDTO> createPatient(@Validated({Default.class, CreatePatientValidationGroup.class}) @RequestBody PatientRequestDTO
@@ -76,6 +89,7 @@ public class PatientController {
         return new ResponseEntity<>(patientService.createPatient(patientRequestDTO), HttpStatus.CREATED);
     }
 
+    @PreAuthorize("hasAuthority('write:patients')") // PHASE 3 (step 3.2)
     @PutMapping("/patients/{id}")
     @Operation(summary = "Update Patient Version 1.0")
     public ResponseEntity<PatientResponseDTO> updatePatient(@PathVariable UUID id,
@@ -83,6 +97,7 @@ public class PatientController {
         return ResponseEntity.ok().body(patientService.updatePatient(id, patientRequestDTO));
     }
 
+    @PreAuthorize("hasAuthority('delete:patients')") // PHASE 3 (step 3.2)
     @DeleteMapping("/patients/{id}")
     @Operation(summary = "Delete Patient Version 1.0")
     public ResponseEntity<Void> deletePatient(@PathVariable UUID id) {

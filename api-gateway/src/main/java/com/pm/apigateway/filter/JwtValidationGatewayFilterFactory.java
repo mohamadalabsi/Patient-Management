@@ -9,7 +9,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpResponse;
-import org.springframework.stereotype.Component;
+// PHASE 3 (old): import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.server.ServerWebExchange;
@@ -32,8 +32,13 @@ import java.time.Duration;
 //   - token rejected by auth-service (4xx)    -> 401 Unauthorized
 //   - auth-service down / too slow / 5xx      -> 503 Service Unavailable, within 3s
 // Both answers use the RFC 9457 Problem Details JSON format, like patient-service.
+//
+// PHASE 3 (step 3.1): RETIRED. Tokens now come from Auth0 and the gateway checks them
+// itself (config/SecurityConfig.java + the resource-server settings in application.yml),
+// without calling another service. This class is kept for reference only: without
+// @Component Spring no longer creates it, and no route uses "JwtValidation" any more.
 // =============================================================================
-@Component
+// PHASE 3 (old): @Component
 public class JwtValidationGatewayFilterFactory extends AbstractGatewayFilterFactory<Object> {
 
     private final WebClient webClient;

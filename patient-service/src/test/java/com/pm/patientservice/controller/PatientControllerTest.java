@@ -1,5 +1,6 @@
 package com.pm.patientservice.controller;
 
+import com.pm.patientservice.config.SecurityConfig;
 import com.pm.patientservice.dto.PatientResponseDTO;
 import com.pm.patientservice.exception.BillingServiceUnavailableException;
 import com.pm.patientservice.exception.EmailAlreadyExistException;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -17,6 +19,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -51,8 +54,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * What these tests pin down: status codes, the Problem Details error format, the
  * "errors" map for validation, and pagination limits. Clients depend on exactly these.
+ *
+ * PHASE 3 (step 3.2): two additions, so these tests keep testing the HTTP contract:
+ *   - @Import(SecurityConfig.class): a @WebMvcTest slice does not pick up our own
+ *     @Configuration classes; without it the test would run with Spring's DEFAULT
+ *     security (form login, CSRF) instead of ours.
+ *   - @WithMockUser(authorities = ...): every request runs as a caller holding all
+ *     patient permissions. Missing/wrong permissions are tested in PatientSecurityTest.
  */
 @WebMvcTest(PatientController.class)
+@Import(SecurityConfig.class)
+@WithMockUser(authorities = {"read:patients", "write:patients", "delete:patients"})
 class PatientControllerTest {
 
     private static final String PROBLEM_JSON = "application/problem+json";

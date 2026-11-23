@@ -1,3 +1,5 @@
+# PHASE 3 (step 3.4): run api-requests/auth0/get-token.http first - it stores the Auth0 token in {{token}}
+# (it replaces auth-service/login.http). DELETE needs delete:patients, which the test app does not have -> 403.
 ### PHASE 0 (step 0.10): fixed (audit B10) - the request had NO Authorization header,
 # so the gateway always answered 401. Run auth-service/login.http first.
 #

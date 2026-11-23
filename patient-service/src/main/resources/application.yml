@@ -60,6 +60,54 @@ spring:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.ByteArraySerializer
 
+  # ---------------------------------------------------------------------------
+  # PHASE 3 (step 3.2): NEW - patient-service verifies access tokens itself.
+  #
+  # issuer-uri / audiences: the same checks as the gateway (step 3.1): signature
+  #   with the issuer's public keys, "iss", "aud", expiry. Same env variables.
+  # authorities-claim-name / authority-prefix: turn the token's permissions into
+  #   what Spring calls "authorities". Auth0 writes them into the claim
+  #   "permissions": ["read:patients", "write:patients"]. With these two settings
+  #   Spring turns each entry into an authority with exactly that name (no "SCOPE_"
+  #   prefix), so the controller can say @PreAuthorize("hasAuthority('read:patients')").
+  #
+  #   token claim "permissions"  ->  authorities  ->  @PreAuthorize on each endpoint
+  # ---------------------------------------------------------------------------
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${AUTH0_ISSUER_URI}
+          audiences: ${AUTH0_AUDIENCE}
+          authorities-claim-name: permissions
+          authority-prefix: ""
+
+      # -------------------------------------------------------------------------
+      # PHASE 3 (step 3.3): NEW - patient-service's OWN identity at Auth0.
+      #
+      # "billing" is just a name for this client registration (used in the code:
+      # ServiceTokenProvider). client_credentials = no user, no login page: the
+      # service proves who it is with client id + secret and gets a token back.
+      #   client-id / secret: the Auth0 application "patient-service" (.env)
+      #   token-uri:          where to ask. Auth0: <tenant>/oauth/token. In the E2E
+      #                       stack AUTH0_TOKEN_URI points at the mock server.
+      #   client_secret_post: send id + secret in the form body (Auth0 accepts this)
+      # The token's permissions come from Auth0 (Application Access -> patient-service
+      # -> Client Access): only create:billing-accounts. The audience parameter Auth0
+      # needs is added in config/ServiceTokenConfig.java.
+      # -------------------------------------------------------------------------
+      client:
+        registration:
+          billing:
+            provider: auth0
+            client-id: ${PATIENT_SERVICE_CLIENT_ID}
+            client-secret: ${PATIENT_SERVICE_CLIENT_SECRET}
+            authorization-grant-type: client_credentials
+            client-authentication-method: client_secret_post
+        provider:
+          auth0:
+            token-uri: ${AUTH0_TOKEN_URI:${AUTH0_ISSUER_URI}oauth/token}
+
 server:
   port: ${SERVER_PORT:4000}
 
