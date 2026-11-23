@@ -1,3 +1,6 @@
+### PHASE 3 (step 3.4): RETIRED - tokens are verified inside each service (Auth0 public keys);
+# there is no /validate endpoint in the request path any more.
+# PHASE 3 (old):
 
-GET http://localhost:4004/auth/validate
-Authorization: Bearer {{token}}
+# GET http://localhost:4004/auth/validate
+# Authorization: Bearer {{token}}

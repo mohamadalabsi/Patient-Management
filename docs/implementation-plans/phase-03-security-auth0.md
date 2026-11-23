@@ -4,7 +4,7 @@
 |---|---|
 | Branch | `feature/phase-03-security-auth0` (from `dev-branch` after PR #4) |
 | Depends on | Phase 1 (tests tell "security works" apart from "routing broke"), Phase 2 (CI runs them) |
-| Status | 🟡 in progress - plan waiting for approval |
+| Status | ✅ done (2026-11-23) - steps 3.1–3.5 committed; merged via the Phase 3 PR (#5) |
 | Roadmap row | Gateway and services validate Auth0 JWTs via JWKS · permissions + `@PreAuthorize` · billing gRPC service-to-service auth (client credentials) · CORS · future of `auth-service` · tests with a mock issuer |
 
 ## How to read this file
@@ -12,10 +12,10 @@
 You should understand the whole phase from this file alone, without opening the code.
 Start with **Security in plain words**, then the **Technology map**. Every step says *what* is done,
 *why*, *how*, *when* you would use the same technique elsewhere, and *how it is verified*.
-**"What you need to do"** lists everything only you can do (the Auth0 account, `.env` values), and
-**Run order** says exactly when. In the code every change gets a `PHASE 3 (step 3.x)` comment that
-explains "we do this, so now that happens, and this is how it connects to the next piece";
-replaced code stays as `PHASE 3 (old)`.
+**"What you need to do"** lists everything only you can do (the Auth0 account, `.env` values).
+**"Where to start reading the code"** gives the files in the order the phase was built. In the code
+every change gets a `PHASE 3 (step 3.x)` comment that explains "we do this, so now that happens, and
+this is how it connects to the next piece"; replaced code stays as `PHASE 3 (old)`.
 
 ## Decisions already made (2026-11-22)
 
@@ -99,6 +99,47 @@ client ── (3) GET /api/patients + token ──► api-gateway ──┤ veri
 A service accepts the token only if **all** of these hold: the signature is valid with Auth0's public
 key, `iss` is our tenant, `aud` is our API, and `exp` is in the future. If any check fails, the answer
 is **401**. If the token is fine but the permission is missing, the answer is **403**.
+
+## Where to start reading the code
+
+Read the files in this order. It's the order the phase was built, and each part uses the one
+before it. Every file has `PHASE 3 (step 3.x)` comments that explain the "how it connects".
+
+### 1. auth-service retired - the gateway checks tokens itself (step 3.1)
+
+| # | File | What to look for |
+|---|---|---|
+| 1 | `docker-compose.yml` | `auth-service` and `postgres-auth` commented out as `PHASE 3 (old)`; the gateway gets `AUTH0_ISSUER_URI` / `AUTH0_AUDIENCE` |
+| 2 | `api-gateway/src/main/resources/application.yml` | `/auth/**` routes and the `JwtValidation` filter commented out; new `spring.security.oauth2.resourceserver.jwt` block (`issuer-uri`, `audiences`) |
+| 3 | `api-gateway/src/main/java/com/pm/apigateway/config/SecurityConfig.java` | **start here for the code**: which path needs a token, 401 vs 403, CORS |
+| 4 | `api-gateway/.../config/ProblemDetailsWriter.java` | the error JSON (same shape as before) |
+| 5 | `api-gateway/.../filter/JwtValidationGatewayFilterFactory.java` | the old filter, kept for reference (`@Component` commented out) |
+| 6 | `api-gateway/src/test/.../config/GatewaySecurityTest.java` + `support/TestTokens.java` | how a "fake Auth0" signs tokens in tests: valid, wrong audience, expired, forged |
+| 7 | `docker-compose.e2e.yml` + `Integration-tests/mock-issuer/mock-oauth2-server.json` + `Integration-tests/src/test/java/E2E.java` (`token()`) | the fake token server for E2E/CI, and how the tests get tokens from it |
+
+### 2. patient-service checks the token and the permissions (step 3.2)
+
+| # | File | What to look for |
+|---|---|---|
+| 1 | `patient-service/src/main/resources/application.yml` | `resourceserver.jwt`: same issuer/audience + `authorities-claim-name: permissions` (token permissions → Spring authorities) |
+| 2 | `patient-service/src/main/java/com/pm/patientservice/config/SecurityConfig.java` | layer 1: valid token needed for `/patients/**`; 401/403 Problem Details |
+| 3 | `patient-service/.../controller/PatientController.java` | layer 2: one `@PreAuthorize` line per endpoint (read / write / delete) |
+| 4 | `patient-service/src/test/.../controller/PatientSecurityTest.java` | who gets 200, 401 or 403, and the finding "validation runs before the permission check" |
+
+### 3. patient-service ↔ billing-service with a service token (step 3.3)
+
+Follow one patient creation through the code:
+
+| # | File | What to look for |
+|---|---|---|
+| 1 | `patient-service/src/main/resources/application.yml` | `oauth2.client.registration.billing`: patient-service's own client id/secret, token URL |
+| 2 | `patient-service/.../config/ServiceTokenConfig.java` | the token manager: adds Auth0's `audience`, caches the token |
+| 3 | `patient-service/.../grpc/ServiceTokenProvider.java` | `token()`: "give me the current service token" |
+| 4 | `patient-service/.../grpc/BearerTokenCallCredentials.java` | puts `authorization: Bearer <token>` into the gRPC metadata |
+| 5 | `patient-service/.../grpc/BillingServiceGrpcClient.java` | `.withCallCredentials(...)`: every billing call carries the token |
+| 6 | `billing-service/src/main/java/com/pm/billingservice/grpc/BearerTokenInterceptor.java` | billing's door check: token → verify → `create:billing-accounts` → method runs |
+| 7 | `billing-service/.../config/SecurityConfig.java` | billing's HTTP side: only health is open |
+| 8 | Tests: `PatientCreationFlowIntegrationTest` (`billingCallCarriesTheServiceTokenWhichIsCached`), `BillingServiceGrpcClientTest`, `BillingGrpcServiceTest` | token sent and cached; no token → 503; billing rejects missing/wrong tokens |
 
 ## Out of scope
 
@@ -289,30 +330,16 @@ New `.claude/skills/security-conventions/SKILL.md` plus a row in `.claude/README
 - **B2 (other stacks):** Node (express-oauth2-jwt-bearer / passport-jwt), Python (FastAPI +
   PyJWT / Authlib), Go (go-oidc), .NET (JwtBearer), and Keycloak/Cognito/Entra instead of Auth0.
 
-## Run order - who does what
-
-| # | Who | What |
-|---|---|---|
-| 1 | Claude | commit this plan (+ roadmap row "in progress") |
-| 2 | **You** | read and approve the plan |
-| 3 | **You** | Auth0: account, API, RBAC settings, permissions, test-application permissions; add `AUTH0_ISSUER_URI` + `AUTH0_AUDIENCE` to `.env`. Tell me when done |
-| 4 | Claude | step 3.1: implement, run tests + stack + E2E, commit; stop and explain |
-| 5 | **You** | push, check CI (I'll read the run) |
-| 6 | Claude | step 3.2: implement, verify, commit; stop and explain |
-| 7 | **You** | Auth0: create the `patient-service` M2M app; add its id/secret to `.env`. Push |
-| 8 | Claude | step 3.3: implement, verify, commit; stop and explain |
-| 9 | Claude | step 3.4 docs, then 3.5 skill, each its own commit |
-| 10 | **You** | push, open the PR into `dev-branch`, merge when CI is green |
-
 ## Verification (end of phase)
 
-- [ ] All per-service tests green (`scripts/mvn-test.sh <svc>`), CI green on the PR
-- [ ] No token → 401, wrong audience/issuer/expired → 401, missing permission → 403, all Problem Details
-- [ ] With your Auth0 test token: list + create patients work; delete → 403
-- [ ] Creating a patient sends a service token to billing; a wrong client secret → 503, no row saved
-- [ ] patient-service on port 4000 directly, without a token → 401
-- [ ] E2E in CI passes with the mock issuer; no Auth0 secrets in GitHub
-- [ ] auth-service no longer runs in compose; its code and tests are still in the repo
+- [x] All per-service tests green (gateway 12 + 8 old skipped, patient 51, billing 6); CI green on PR #5 for 3.1 and 3.2
+- [x] No token → 401, wrong audience/issuer/expired/forged → 401, missing permission → 403, all Problem Details
+- [x] With your Auth0 test token (Postman): list + create work; delete → 403
+- [x] Creating a patient sends a service token to billing (test + E2E); no token available → 503, no row saved (test)
+- [ ] With real Auth0: `POST` a patient → 201 using the real `patient-service` app; wrong secret → 503 (your check)
+- [x] patient-service called directly inside the network without a token → 401; billing gRPC without a token → `UNAUTHENTICATED`
+- [x] E2E in CI passes with the mock issuer; no Auth0 secrets in GitHub
+- [x] auth-service no longer runs in compose; its code and tests are still in the repo
 
 ## Exercises
 
@@ -327,10 +354,13 @@ New `.claude/skills/security-conventions/SKILL.md` plus a row in `.claude/README
 
 ## Risks
 
-- **Issuer mismatch with the mock server.** It writes the URL it was called with into `iss`. The
-  tests (on the host, `localhost:<port>`) and the services (in Docker, `mock-oauth2-server:8080`)
-  must see the same issuer. Fix: services fetch the keys via the internal `jwk-set-uri` and
-  validate `iss` against the address the tests use. This is settled in step 3.1.
+- **Issuer mismatch with the mock server.** It writes the host it was called with into `iss`. The
+  tests (on the host, `localhost:8090`) and the services (in Docker, `mock-oauth2-server:8080`)
+  must see the same issuer. *Solved in 3.1:* the tests send the header
+  `Host: mock-oauth2-server:8080` when they ask for a token, so the issuer always matches what
+  the services trust - no extra `jwk-set-uri` setting needed.
+- **Tokens travel unencrypted inside the Docker network** (gRPC and HTTP without TLS). Fine for a
+  local stack; encryption between services (TLS/mTLS) belongs to the Kubernetes phase.
 - **Auth0 trailing slash.** Auth0's `iss` ends with `/`. Without it in `AUTH0_ISSUER_URI`, every
   token gets a 401.
 - **Auth0 free M2M quota.** It's limited per month. Token caching in step 3.3 keeps us far below it.
@@ -339,4 +369,36 @@ New `.claude/skills/security-conventions/SKILL.md` plus a row in `.claude/README
 
 ## What changed
 
-*(filled in at step 3.4)*
+### Deviations from the plan (and why)
+
+| Plan said | What we did | Why |
+|---|---|---|
+| 3.1: fix the mock issuer mismatch with `jwk-set-uri` | `Host` header when the tests request a token | Simpler: the services need only `issuer-uri`, the same as with Auth0 |
+| 3.2: "a small converter" for the `permissions` claim | Two Boot properties: `authorities-claim-name: permissions`, `authority-prefix: ""` | Boot 4 supports it directly - no code |
+| 3.2: 401/403 in `GlobalExceptionHandler` | In `SecurityConfig` (entry point + access-denied handler) | Security errors happen before the controller; the handler never sees most of them |
+| 3.2: tests with `jwt()` | `@WithMockUser` for the existing tests, a table-based test `JwtDecoder` for the new ones | The test decoder runs the REAL claim → authority mapping from `application.yml` |
+| 3.3: gRPC `ClientInterceptor` | gRPC `CallCredentials` (`BearerTokenCallCredentials`) | gRPC's official hook for credentials; a token failure becomes a clean `UNAUTHENTICATED` |
+| 3.3: Auth0 token URL | `token-uri: ${AUTH0_TOKEN_URI:${AUTH0_ISSUER_URI}oauth/token}` | Auth0 and the mock server use different paths; E2E overrides it |
+
+### Findings
+
+- **Fixed (from Phase 1):** the gateway's 401 body had `instance: /patients` (the stripped path). Spring
+  Security runs before the route, so it is now `/api/patients`.
+- **Found by a test, accepted:** a caller with a valid token but without `write:patients` who sends an
+  *invalid* body gets **400**, not 403 - Spring validates the body before `@PreAuthorize` runs. Only the
+  field rules leak, no data. Documented in `PatientSecurityTest.validationRunsBeforeThePermissionCheck`.
+
+### Files
+
+| Area | Files | Step |
+|---|---|---|
+| Gateway | `pom.xml` (resource-server starter + test starter), `application.yml` (issuer/audience, CORS origin; auth routes + filter → old), **new** `config/SecurityConfig.java`, `config/ProblemDetailsWriter.java`; `JwtValidationGatewayFilterFactory` no longer a bean | 3.1 |
+| Gateway tests | **new** `GatewaySecurityTest` (11), `support/TestTokens`; `GatewayJwtFilterTest` disabled (kept); context test gets issuer values | 3.1 |
+| Compose / CI | `docker-compose.yml` (auth-service + auth DB → old; issuer/audience for gateway, patient, billing; patient-service client id/secret), **new** `docker-compose.e2e.yml`, `ci.yml` (e2e job uses both compose files; throwaway env without auth DB/JWT) | 3.1–3.3 |
+| E2E | **new** `Integration-tests/mock-issuer/mock-oauth2-server.json` (clients `e2e-client`, `e2e-reader`, `e2e-other-api`, `patient-service`); `E2E.token()`; login tests disabled; new tests: other audience → 401, read-only → 403 | 3.1–3.3 |
+| patient-service | `pom.xml` (resource server, oauth2 client, test starter), `application.yml` (resource server + client registration), **new** `config/SecurityConfig`, `config/ServiceTokenConfig`, `grpc/ServiceTokenProvider`, `grpc/BearerTokenCallCredentials`; `@PreAuthorize` in `PatientController`; `BillingServiceGrpcClient` uses the credentials | 3.2, 3.3 |
+| patient-service tests | **new** `PatientSecurityTest` (9), `BillingServiceGrpcClientTest` (2), `FakeTokenEndpoint`, `src/test/resources/application.properties`; `FakeBillingServer` records the auth header; `@WithMockUser` on the existing web/flow tests | 3.2, 3.3 |
+| billing-service | `pom.xml` (resource server), `application.yml` (issuer/audience), **new** `grpc/BearerTokenInterceptor`, `config/SecurityConfig`; tests: 3 new in `BillingGrpcServiceTest`, test properties | 3.3 |
+| Requests | **new** `api-requests/auth0/get-token.http` + `http-client.env.json` (private values in a git-ignored file); `auth-service/*.http` marked old; gRPC request notes the token | 3.4 |
+| Docs | README (architecture, security, `.env`, tests), CLAUDE.md (auth architecture), roadmap Progress, this file | 3.4 |
+| Skill | **new** `.claude/skills/security-conventions/SKILL.md` + row in `.claude/README.md` | 3.5 |

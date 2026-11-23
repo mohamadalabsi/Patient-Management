@@ -187,7 +187,7 @@ docs/
 | 0 | `feature/phase-00-fixes-and-foundation` | ✅ done (2026-11-16) — [phase-00](phase-00-fixes-and-foundation.md) |
 | 1 | `feature/phase-01-testing` | ✅ done (2026-11-17) — [phase-01](phase-01-testing.md) |
 | 2 | `feature/phase-02-ci-docker-hub` | ✅ done (2026-11-21) — [phase-02](phase-02-ci-docker-hub.md) |
-| 3 | `feature/phase-03-security-auth0` | 🟡 in progress — [phase-03](phase-03-security-auth0.md) |
+| 3 | `feature/phase-03-security-auth0` | ✅ done (2026-11-23) — [phase-03](phase-03-security-auth0.md) |
 | 4 | – | not started |
 | 5 | – | not started |
 | 6 | – | not started |

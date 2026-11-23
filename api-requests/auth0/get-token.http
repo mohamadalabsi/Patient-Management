@@ -1,0 +1,18 @@
+### PHASE 3 (step 3.4): NEW - get an access token from Auth0 (replaces auth-service/login.http).
+#
+# Client credentials = the token of your Auth0 TEST application ("Patient Management":
+# read:patients + write:patients). Run this first; it stores the token in {{token}}, which
+# all patients-service/*.http requests send as "Authorization: Bearer {{token}}".
+#
+# The values come from the environment "local" (choose it in the run dropdown):
+#   api-requests/http-client.env.json          -> auth0Domain, audience  (committed, not secret)
+#   api-requests/http-client.private.env.json  -> clientId, clientSecret (git-ignored, create it yourself:
+#       { "local": { "clientId": "<test app Client ID>", "clientSecret": "<test app Client Secret>" } }
+#
+# Auth0 needs "audience": it says FOR WHICH API the token is (our services check it as "aud").
+POST https://{{auth0Domain}}/oauth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id={{clientId}}&client_secret={{clientSecret}}&audience={{audience}}
+
+> {% client.global.set("token", response.body.access_token) %}

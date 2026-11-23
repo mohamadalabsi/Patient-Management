@@ -1,10 +1,13 @@
-POST http://localhost:4004/auth/login
-#POST http://lb-3f195800.elb.localhost.localstack.cloud:4004/auth/login
-Content-Type: application/json
+### PHASE 3 (step 3.4): RETIRED - auth-service no longer runs and the gateway has no /auth route.
+# Get a token from Auth0 instead: api-requests/auth0/get-token.http
+# PHASE 3 (old):
+# POST http://localhost:4004/auth/login
+# #POST http://lb-3f195800.elb.localhost.localstack.cloud:4004/auth/login
+# Content-Type: application/json
 
-{
-  "email": "testuser@test.com",
-  "password": "password123"
-}
+# {
+#   "email": "testuser@test.com",
+#   "password": "password123"
+# }
 
-> {% client.global.set("token",response.body.token) %}
+# > {% client.global.set("token",response.body.token) %}

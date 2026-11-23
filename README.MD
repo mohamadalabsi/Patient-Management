@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mohamadalabsi/Patient-Management/actions/workflows/ci.yml/badge.svg?branch=dev-branch)](https://github.com/mohamadalabsi/Patient-Management/actions/workflows/ci.yml)
 
-A microservices-based healthcare patient management system built with Spring Boot: an API gateway, JWT authentication, gRPC between services, event-driven messaging with Kafka and Protobuf, PostgreSQL with Flyway migrations, all running locally with Docker Compose.
+A microservices-based healthcare patient management system built with Spring Boot: an API gateway, OAuth2 / OIDC security with Auth0 (every service verifies the tokens itself), gRPC between services, event-driven messaging with Kafka and Protobuf, PostgreSQL with Flyway migrations, all running locally with Docker Compose.
 
 > 📍 **Roadmap & learning plan:** [`docs/implementation-plans/roadmap.md`](docs/implementation-plans/roadmap.md) — audit findings and the phased plan (testing, CI, Auth0, reliability, observability, Kubernetes, AWS). Each phase has its own plan file in the same folder.
 
@@ -13,6 +13,7 @@ A microservices-based healthcare patient management system built with Spring Boo
 - [Technology Stack](#-technology-stack)
 - [Getting Started](#-getting-started)
 - [API Endpoints](#-api-endpoints)
+- [Security](#-security)
 - [Errors](#-errors)
 - [Service Communication](#-service-communication)
 - [Database & Migrations](#-database--migrations)
@@ -25,15 +26,20 @@ A microservices-based healthcare patient management system built with Spring Boo
 ## 🏗️ Architecture
 
 ```
-Client ─► api-gateway :4004 (Spring Cloud Gateway, reactive)
-            │  /auth/**          → auth-service :4005 ──► AuthDB (Postgres, host port 5001)
-            │  /api/patients/**  → JwtValidation filter ──GET /validate──► auth-service
-            │                     → patient-service :4000 ──► PatientDB (Postgres, host port 5000)
-            │                            ├─ gRPC (sync, 3s deadline) ─► billing-service :9001
-            │                            └─ Kafka topic "patient" (Protobuf, after DB commit) ─► analytics-service :4003
+                 Auth0 (login, users, permissions; signs tokens)
+                   │ access token                 ▲ client credentials (patient-service's own token)
+                   ▼                              │
+Client ─token─► api-gateway :4004 (Spring Cloud Gateway, reactive) - verifies the token (Auth0 public keys)
+                  │  /api/patients/** → patient-service :4000 - verifies again + permission per endpoint
+                  │                       ├──► PatientDB (Postgres, host port 5000)
+                  │                       ├─ gRPC + service token (3s deadline) ─► billing-service :9001
+                  │                       │                                      (checks create:billing-accounts)
+                  │                       └─ Kafka topic "patient" (Protobuf, after DB commit) ─► analytics-service :4003
 ```
 
-Only the gateway (4004) is the intended entry point. patient-service and auth-service are not published to the host.
+Only the gateway (4004) is the intended entry point; patient-service is not published to the host.
+**auth-service is retired** (Phase 3): its code stays in the repo for reference, but it no longer runs -
+login and tokens are Auth0's job.
 
 > The former AWS CDK / LocalStack setup was removed on purpose. Cloud deployment comes back later with Terraform (roadmap phase 8).
 
@@ -41,10 +47,10 @@ Only the gateway (4004) is the intended entry point. patient-service and auth-se
 
 | Service | Port | Responsibility |
 |---|---|---|
-| **api-gateway** | 4004 | Routing; validates the token via auth-service for `/api/patients/**` (401 invalid token, 503 auth-service unavailable) |
-| **auth-service** | 4005 | Login, issues HS256 JWTs, `GET /validate` |
-| **patient-service** | 4000 | Patient CRUD, gRPC client of billing, Kafka producer |
-| **billing-service** | 4002 (HTTP), 9001 (gRPC) | gRPC server `CreateBillingAccount` (currently a stub) |
+| **api-gateway** | 4004 | Routing, CORS; verifies the Auth0 token for `/api/**` (401 if missing/invalid) |
+| **patient-service** | 4000 | Patient CRUD with per-endpoint permissions, gRPC client of billing (own service token), Kafka producer |
+| **billing-service** | 4002 (HTTP), 9001 (gRPC) | gRPC server `CreateBillingAccount` (currently a stub); requires `create:billing-accounts` |
+| ~~auth-service~~ | – | **retired** (Phase 3): was login + HS256 JWTs + `/validate`; replaced by Auth0 |
 | **analytics-service** | 4003 | Kafka consumer of patient events (currently logs them) |
 
 ## 🛠️ Technology Stack
@@ -54,7 +60,7 @@ Only the gateway (4004) is the intended entry point. patient-service and auth-se
 | Language | Java 21 |
 | Framework | Spring Boot **4.0.9** (all services) |
 | API Gateway | Spring Cloud Gateway 5 (Spring Cloud 2025.1, WebFlux) |
-| Security | Spring Security, jjwt 0.12.6 (Auth0 planned — roadmap phase 3) |
+| Security | **Auth0** (OAuth2 / OIDC), Spring Security 7 resource servers + OAuth2 client (client credentials), gRPC call credentials |
 | Database | PostgreSQL 16, Spring Data JPA, **Flyway** migrations |
 | Messaging | Apache Kafka 4.3.2 (KRaft), Protobuf payloads |
 | RPC | gRPC + Protobuf (contracts in root `proto/`) |
@@ -68,16 +74,20 @@ Only the gateway (4004) is the intended entry point. patient-service and auth-se
 
 **Prerequisites:** Docker Desktop (with Compose). A local JDK/Maven is optional — every image is built from source inside Docker.
 
-1. Create a root `.env` file (see [Configuration](#-environment-variables-and-configuration)).
-2. Start everything:
+1. Set up Auth0 once (free account): an API with identifier `https://api.patient-management.local`,
+   RBAC + "permissions in the access token" on, and two Machine-to-Machine apps - see
+   [Security](#-security) and the step-by-step list in
+   [phase-03-security-auth0.md → "What you need to do"](docs/implementation-plans/phase-03-security-auth0.md).
+2. Create a root `.env` file (see [Configuration](#-environment-variables-and-configuration)).
+3. Start everything:
    ```bash
    docker compose up --build
    ```
-3. Wait until all containers are **healthy**:
+4. Wait until all containers are **healthy**:
    ```bash
    docker compose ps
    ```
-   Services start in dependency order (`depends_on: service_healthy`): databases and Kafka → billing/auth → patient → gateway.
+   Services start in dependency order (`depends_on: service_healthy`): databases and Kafka → billing → patient → gateway.
 
 Useful commands:
 
@@ -92,29 +102,24 @@ docker compose down -v                      # stop AND delete database volumes
 
 All requests go through the gateway at `http://localhost:4004`. Ready-made requests are in [`api-requests/`](api-requests) (IntelliJ HTTP client).
 
-### Authentication
+### Getting a token
 
-```http
-POST /auth/login
-Content-Type: application/json
+Tokens come from **Auth0** (there is no `/auth/login` any more). For testing, use the token of your
+Auth0 test application:
 
-{ "email": "testuser@test.com", "password": "password123" }
-```
-→ `200 {"token": "..."}`. The test user exists **only in local development** (see [Database & Migrations](#-database--migrations)).
+- Auth0 dashboard → APIs → Patient Management API → **Test** tab → copy `access_token`, or
+- [`api-requests/auth0/get-token.http`](api-requests/auth0/get-token.http) (client credentials; stores it in `{{token}}`), or
+- Postman: Authorization → OAuth 2.0 → Client Credentials, token URL `https://<tenant>/oauth/token`,
+  extra token-request parameter `audience=https://api.patient-management.local`.
 
-```http
-GET /auth/validate
-Authorization: Bearer <token>
-```
+### Patients (require `Authorization: Bearer <token>` with the listed permission)
 
-### Patients (require `Authorization: Bearer <token>`)
-
-| Method | Path | Notes |
-|---|---|---|
-| `GET` | `/api/patients?page=0&size=20&sort=name,asc` | Paginated; defaults page 0, size 20, sort by name; max size 100 |
-| `POST` | `/api/patients` | `201`; also creates a billing account (gRPC) and publishes a Kafka event |
-| `PUT` | `/api/patients/{id}` | `200`; `registrationDate` not required |
-| `DELETE` | `/api/patients/{id}` | `204` |
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| `GET` | `/api/patients?page=0&size=20&sort=name,asc` | `read:patients` | Paginated; defaults page 0, size 20, sort by name; max size 100 |
+| `POST` | `/api/patients` | `write:patients` | `201`; also creates a billing account (gRPC) and publishes a Kafka event |
+| `PUT` | `/api/patients/{id}` | `write:patients` | `200`; `registrationDate` not required |
+| `DELETE` | `/api/patients/{id}` | `delete:patients` | `204` |
 
 Create body (dates are `yyyy-MM-dd`; `birthDate` must be in the past):
 ```json
@@ -136,15 +141,38 @@ Paginated response:
 ```
 
 ### API docs (OpenAPI)
-- `GET /api-docs/patients`
-- `GET /api-docs/auth`
+- `GET /api-docs/patients` (public)
 
 ### Billing (gRPC, direct)
 ```http
 GRPC localhost:9001/BillingService/CreateBillingAccount
+authorization: Bearer <token with create:billing-accounts>
 
 { "patientId": "12345", "name": "John Doe", "email": "john@example.com" }
 ```
+Only patient-service has that permission (its own Auth0 app). Without a token → `UNAUTHENTICATED`,
+with a token lacking the permission → `PERMISSION_DENIED`. Health and server reflection stay public.
+
+## 🔐 Security
+
+Details, diagrams and the reasoning: [phase-03-security-auth0.md](docs/implementation-plans/phase-03-security-auth0.md).
+
+- **Auth0 is the identity provider.** It logs people in, stores users, and signs **access tokens** (JWT, RS256)
+  with its private key. Our services never see a password.
+- **Every service verifies tokens itself** with Auth0's public keys (JWKS, fetched once and cached):
+  signature, issuer (`AUTH0_ISSUER_URI`), audience (`AUTH0_AUDIENCE`), expiry. No call per request.
+- **Two checks for the patient API** (defence in depth): the gateway (valid token for `/api/**`), then
+  patient-service (valid token + the endpoint's permission via `@PreAuthorize`).
+- **Permissions** (`read:patients`, `write:patients`, `delete:patients`, `create:billing-accounts`) are defined
+  on the Auth0 API and given to people (roles) or programs (Machine-to-Machine apps). The token's
+  `permissions` claim carries them; the code only *requires* them.
+- **Service-to-service:** patient-service has its own Auth0 app (client credentials, only
+  `create:billing-accounts`), gets a token (cached until shortly before it expires) and sends it on every
+  gRPC call; billing-service checks it in a gRPC interceptor.
+- **401 vs 403:** 401 = no valid token (who are you?), 403 = valid token, missing permission (you may not).
+- **CORS:** only the gateway answers browsers; allowed origins via `CORS_ALLOWED_ORIGINS` (default `http://localhost:3000`).
+- **Tests and CI never use the real Auth0:** unit tests sign their own tokens or use a test decoder;
+  the E2E stack adds a local fake issuer (`docker-compose.e2e.yml`, mock-oauth2-server).
 
 ## ❗ Errors
 
@@ -158,15 +186,16 @@ Errors use **RFC 9457 Problem Details** (`application/problem+json`):
 | Status | When |
 |---|---|
 | 400 | Validation failed (with an `errors` map per field), malformed JSON / invalid date, unknown sort field, invalid UUID |
-| 401 | Missing, invalid or expired token |
+| 401 | Missing, invalid or expired token, or a token for another issuer/audience (`WWW-Authenticate: Bearer`) |
+| 403 | Valid token, but the permission for this operation is missing |
 | 404 | Patient not found |
 | 409 | Email already used (also under concurrent requests) |
-| 503 | billing-service or auth-service unavailable / too slow — nothing was saved, retry later |
+| 503 | billing-service unavailable / too slow / refused the service token — nothing was saved, retry later |
 
 ## 🔄 Service Communication
 
-- **REST:** client → gateway → auth-service / patient-service.
-- **gRPC:** patient-service → billing-service with a **deadline** (`BILLING_SERVICE_DEADLINE`, default `3s`). Patient creation is one DB transaction: if billing fails, the patient insert is rolled back and the API answers 503.
+- **REST:** client → gateway → patient-service (the client's token is forwarded unchanged).
+- **gRPC:** patient-service → billing-service with patient-service's own **service token** and a **deadline** (`BILLING_SERVICE_DEADLINE`, default `3s`). Patient creation is one DB transaction: if billing fails, the patient insert is rolled back and the API answers 503.
 - **Kafka:** after the DB transaction **commits**, patient-service publishes `PatientEvent` (Protobuf) to topic `patient`, keyed by patient id (per-patient ordering). analytics-service consumes it (group `analytics-service`).
 - **Contracts:** one copy of each `.proto` in [`proto/`](proto). Services compile them via `<protoSourceRoot>../proto</protoSourceRoot>`, which is why the patient/billing/analytics images are built with the repo root as Docker build context.
 
@@ -177,13 +206,13 @@ Logs contain **IDs only** — no patient names or emails.
 | DB | Container | Host port | Owner |
 |---|---|---|---|
 | PatientDB | `patient-postgres` | 5000 | patient-service |
-| AuthDB | `auth-postgres` | 5001 | auth-service |
+| ~~AuthDB~~ | – | – | retired with auth-service (Phase 3); an old local volume is not deleted automatically |
 
 The schema is managed by **Flyway** (`src/main/resources/db/migration/V*.sql`); Hibernate only validates it (`ddl-auto: validate`).
 
 - To change the schema, **add** a new migration (`V2__...sql`) — never edit one that already ran.
 - Existing databases created by older versions are baselined automatically (`baseline-on-migrate`).
-- The test user `testuser@test.com` lives in `auth-service/src/main/resources/db/dev-data/` and is loaded **only** because `docker-compose.yml` sets `SPRING_FLYWAY_LOCATIONS=classpath:db/migration,classpath:db/dev-data`. Production must not set it.
+- *(Retired with auth-service)* the dev test user `testuser@test.com` was seeded from `auth-service/src/main/resources/db/dev-data/`. Users now live in Auth0.
 
 Database credentials come from `.env` and are applied when a volume is first created. After changing them run `docker compose down -v` (deletes local data).
 
@@ -219,11 +248,11 @@ mounted, so Testcontainers can start sibling containers.
 
 | Service | Tests | Runtime* | What is covered |
 |---|---|---|---|
-| patient-service | 39 | ~80 s | service rules (Mockito), HTTP contract (`@WebMvcTest`), repository on real Postgres (`@DataJpaTest`), creation flow: rollback + after-commit Kafka event + gRPC deadline (fake billing server) |
-| auth-service | 23 | ~45 s | JWT (tampered/expired/foreign key), login rules, `/login` + `/validate` contract, login against real Postgres, no dev user in prod |
-| billing-service | 3 | ~25 s | gRPC API over in-process transport |
+| patient-service | 51 | ~90 s | service rules (Mockito), HTTP contract (`@WebMvcTest`), **permissions per endpoint (401/403)**, repository on real Postgres (`@DataJpaTest`), creation flow: rollback + after-commit Kafka event + gRPC deadline + **service token sent and cached** (fake billing + fake token endpoint) |
+| auth-service | 23 | ~45 s | *(retired service, still tested)* JWT, login rules, `/login` + `/validate` contract |
+| billing-service | 6 | ~25 s | gRPC API over in-process transport; **token check: none / invalid → UNAUTHENTICATED, wrong permission → PERMISSION_DENIED** |
 | analytics-service | 3 | ~25 s | Kafka consumer on real Kafka, malformed message skipped, no PII logged |
-| api-gateway | 9 | ~27 s | JWT filter against stub services: 401 / 503 / timeout, routing |
+| api-gateway | 12 (+8 old, skipped) | ~27 s | **token checks with self-signed test tokens** (valid, missing, wrong audience/issuer, expired, forged), routing, CORS |
 
 \* on a laptop with Docker Desktop, images cached; includes Maven startup and `clean`.
 
@@ -231,14 +260,17 @@ The Dockerfiles still build with `-DskipTests`: running Testcontainers inside `d
 would need Docker-in-Docker. Tests run as their own step - locally with the script, in CI as the
 `test` job (see [CI/CD](#-cicd)).
 
-**2. End-to-end tests** (`Integration-tests/`, REST Assured) call the running stack through the gateway:
+**2. End-to-end tests** (`Integration-tests/`, REST Assured) call the running stack through the gateway.
+They get their tokens from a **local fake issuer**, so the stack is started with the E2E override file
+(it adds `mock-oauth2-server` and points the services at it - your `.env` still needs the variables):
 
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait
 docker run --rm -v "$PWD/Integration-tests":/ws -v pm-m2-cache:/root/.m2 -w /ws \
   --add-host=host.docker.internal:host-gateway maven:3.9.9-eclipse-temurin-21 \
-  mvn -B test -Dgateway.url=http://host.docker.internal:4004
-# with a local JDK:  cd Integration-tests && mvn test      (default gateway.url = http://localhost:4004)
+  mvn -B test -Dgateway.url=http://host.docker.internal:4004 \
+              -Dtoken.url=http://host.docker.internal:8090/default/token
+# with a local JDK:  cd Integration-tests && mvn test   (defaults: localhost:4004, localhost:8090)
 ```
 
 ## ⚙️ CI/CD
@@ -276,7 +308,7 @@ uploads a small layer. **Dependabot** ([`.github/dependabot.yml`](.github/depend
 PRs into `dev-branch` for Maven dependencies, base images, compose images and GitHub Actions.
 
 Needed once (repository settings): the secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub
-access token with Read & Write scope). The CI database passwords and JWT secret are generated per run.
+access token with Read & Write scope). The CI database password is generated per run; CI uses the fake token issuer, so **no Auth0 secrets are stored in GitHub**.
 
 To check workflow files before pushing:
 
@@ -293,11 +325,16 @@ PATIENT_DB_NAME=your_patient_database
 PATIENT_DB_USER=your_patient_database_user
 PATIENT_DB_PASSWORD=your_patient_database_password
 
-AUTH_DB_NAME=your_auth_database
-AUTH_DB_USER=your_auth_database_user
-AUTH_DB_PASSWORD=your_auth_database_password
+# Auth0 (Phase 3): tenant URL WITH the trailing "/", and the API identifier
+AUTH0_ISSUER_URI=https://<your-tenant>.eu.auth0.com/
+AUTH0_AUDIENCE=https://api.patient-management.local
 
-JWT_SECRET=your_base64_encoded_secret_of_at_least_32_bytes
+# Auth0 Machine-to-Machine app "patient-service" (only create:billing-accounts)
+PATIENT_SERVICE_CLIENT_ID=...
+PATIENT_SERVICE_CLIENT_SECRET=...
+
+# no longer used since Phase 3 (auth-service retired) - safe to delete:
+# AUTH_DB_NAME / AUTH_DB_USER / AUTH_DB_PASSWORD / JWT_SECRET
 ```
 
 Non-secret values set by Compose:
@@ -307,9 +344,10 @@ Non-secret values set by Compose:
 | `BILLING_SERVICE_ADDRESS` / `_PORT` | patient | `billing-service` / `9001` |
 | `BILLING_SERVICE_DEADLINE` | patient | `3s` |
 | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | patient, analytics | `kafka:9092` |
-| `SPRING_FLYWAY_LOCATIONS` | auth | includes `db/dev-data` (local only) |
-| `AUTH_SERVICE_URL` / `PATIENT_SERVICE_URL` | gateway | `http://auth-service:4005` / `http://patient-service:4000` |
-| `AUTH_SERVICE_TIMEOUT` | gateway | default `3s` |
+| `PATIENT_SERVICE_URL` | gateway | `http://patient-service:4000` |
+| `CORS_ALLOWED_ORIGINS` | gateway | default `http://localhost:3000` (comma-separated) |
+| `AUTH0_ISSUER_URI` / `AUTH0_AUDIENCE` | gateway, patient, billing | from `.env` (E2E: the fake issuer) |
+| `AUTH0_TOKEN_URI` | patient | default `<AUTH0_ISSUER_URI>oauth/token` (E2E: the fake issuer) |
 
 ## 📁 Project Structure
 
@@ -317,7 +355,7 @@ Non-secret values set by Compose:
 Patient-Management/
 ├── .github/              # CI workflow (workflows/ci.yml) + Dependabot config
 ├── api-gateway/          # Spring Cloud Gateway (WebFlux)
-├── auth-service/         # Login + JWT (Flyway: db/migration, db/dev-data)
+├── auth-service/         # RETIRED in Phase 3 (Auth0 replaces it) - kept for reference, not in compose
 ├── patient-service/      # Patient CRUD, gRPC client, Kafka producer (Flyway)
 ├── billing-service/      # gRPC server
 ├── analytics-service/    # Kafka consumer
@@ -325,10 +363,11 @@ Patient-Management/
 ├── Integration-tests/    # REST Assured end-to-end tests
 ├── scripts/mvn-test.sh   # run one service's tests in Docker (no local JDK)
 ├── .claude/              # Claude Code settings + project skills (one per roadmap phase)
-├── api-requests/         # IntelliJ .http requests
+├── api-requests/         # IntelliJ .http requests (auth0/get-token.http first)
 ├── grpc-requests/        # IntelliJ gRPC requests
 ├── docs/implementation-plans/  # Roadmap and per-phase plans
-└── docker-compose.yml
+├── docker-compose.yml
+└── docker-compose.e2e.yml  # E2E/CI override: fake token issuer (mock-oauth2-server)
 ```
 
 ## 📝 License
